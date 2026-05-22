@@ -1,0 +1,1344 @@
+===============================================================================
+PROOFCHAIN — PROMPT DE IMPLEMENTAÇÃO TÉCNICA
+Plano de Features e Tasks para desenvolvimento solo em 10 dias
+===============================================================================
+
+CONTEXTO PARA O AGENTE:
+Você é um engenheiro sênior full-stack com especialidade em Web3 e sistemas
+financeiros. Você está implementando o ProofChain, um Sistema Híbrido de
+Integridade Corporativa para registro e auditoria de Títulos de Dívida
+Corporativa (ex-debêntures). O sistema usa blockchain (Ethereum Sepolia) como
+âncora criptográfica imutável e PostgreSQL como armazenamento operacional.
+
+A arquitetura central é: dados completos ficam off-chain (PostgreSQL + privacidade
+LGPD), apenas o hash SHA-256 vai on-chain (Ethereum Sepolia, custo zero de leitura).
+Se alguém adulterar o banco, os hashes divergem e a fraude é exposta na tela.
+
+Stack obrigatória:
+  - Backend  : Node.js + TypeScript + Express + Prisma ORM
+  - Banco    : PostgreSQL
+  - Blockchain: Solidity + Hardhat + Ethers.js (rede Sepolia)
+  - Frontend : React + TypeScript + Tailwind CSS + Recharts
+  - Testes   : Jest (backend) + Hardhat/Chai (smart contract)
+
+Princípios de código:
+  - TypeScript strict: true em todos os projetos.
+  - Sem queries SQL raw — apenas Prisma ORM.
+  - Sem credenciais hardcoded — apenas variáveis de ambiente (.env).
+  - Toda operação de escrita gera AuditLog automaticamente.
+  - DELETE físico na tabela titulos_divida é proibido em qualquer contexto.
+
+===============================================================================
+FEATURE 01 — FUNDAÇÃO DO PROJETO (MONOREPO + CONFIGURAÇÃO)
+===============================================================================
+
+Objetivo: Criar a estrutura base do monorepo com todas as ferramentas
+configuradas corretamente antes de escrever qualquer linha de lógica.
+Erro aqui contamina todas as features seguintes.
+
+-------------------------------------------------------------------------------
+TASK 01.1 — Estrutura de pastas do monorepo
+-------------------------------------------------------------------------------
+Criar a seguinte estrutura de diretórios:
+
+  proofchain/
+  ├── backend/
+  ├── smart-contract/
+  ├── frontend/
+  ├── README.md
+  └── docker-compose.yml
+
+Regras:
+  - Cada subprojeto tem seu próprio package.json e tsconfig.json.
+  - Não usar workspaces de monorepo (manter simples para solo developer).
+  - docker-compose.yml deve subir apenas PostgreSQL (não a aplicação).
+
+Entregável: Estrutura de pastas criada e docker-compose.yml funcional.
+Validação: `docker-compose up -d` sobe o banco sem erros.
+
+-------------------------------------------------------------------------------
+TASK 01.2 — Configuração do Backend (Node.js + TypeScript + Express)
+-------------------------------------------------------------------------------
+Dentro de /backend, configurar:
+
+  package.json com scripts:
+    - "dev"   : ts-node-dev --respawn src/app.ts
+    - "build" : tsc
+    - "test"  : jest --coverage
+    - "lint"  : eslint src --ext .ts
+
+  tsconfig.json:
+    - target: ES2020
+    - strict: true
+    - outDir: ./dist
+    - rootDir: ./src
+    - esModuleInterop: true
+
+  Dependências de produção:
+    express, prisma, @prisma/client, ethers, bcryptjs, jsonwebtoken,
+    express-rate-limit, cors, dotenv, uuid, node-cron
+
+  Dependências de desenvolvimento:
+    typescript, ts-node-dev, jest, ts-jest, @types/*, eslint
+
+  Arquivo src/app.ts:
+    - Express configurado com middlewares: cors, json parser, rate limiter.
+    - Rota GET /api/health retornando { status: 'ok', timestamp: Date.now() }.
+    - Porta lida de process.env.PORT com fallback 3001.
+
+  Arquivo src/config/env.ts:
+    - Validar na inicialização que todas as variáveis de ambiente obrigatórias
+      existem. Se alguma estiver ausente, lançar erro e encerrar o processo
+      (crash-fast). Variáveis obrigatórias:
+        DATABASE_URL, JWT_SECRET, SEPOLIA_RPC_URL,
+        BACKEND_WALLET_PRIVATE_KEY, CONTRACT_ADDRESS
+
+Entregável: Backend inicializa, responde GET /api/health com HTTP 200.
+Validação: curl http://localhost:3001/api/health retorna JSON de sucesso.
+
+-------------------------------------------------------------------------------
+TASK 01.3 — Configuração do Ambiente Hardhat (Smart Contract)
+-------------------------------------------------------------------------------
+Dentro de /smart-contract, configurar:
+
+  package.json com scripts:
+    - "compile" : hardhat compile
+    - "test"    : hardhat test
+    - "deploy"  : hardhat run scripts/deploy.ts --network sepolia
+    - "node"    : hardhat node (rede local para testes)
+
+  hardhat.config.ts:
+    - Redes configuradas: hardhat (local), sepolia (testnet).
+    - Sepolia usa SEPOLIA_RPC_URL e BACKEND_WALLET_PRIVATE_KEY do .env.
+    - Solidity version: 0.8.19.
+    - Habilitar gas reporter.
+
+  .env.example com todas as variáveis necessárias e valores fictícios.
+
+Entregável: `npx hardhat compile` executa sem erros.
+
+-------------------------------------------------------------------------------
+TASK 01.4 — Configuração do Frontend (React + TypeScript + Tailwind)
+-------------------------------------------------------------------------------
+Dentro de /frontend, configurar com Create React App ou Vite:
+
+  Dependências:
+    tailwindcss, recharts, react-router-dom, axios, react-hook-form
+
+  tailwind.config.js:
+    Adicionar as cores customizadas do sistema (conforme UI-001):
+      - emerald-500 : #10B981 (íntegro / verificado)
+      - red-500     : #EF4444 (fraude / comprometido)
+      - amber-500   : #F59E0B (pendente / vencido)
+
+  Estrutura de pastas src/:
+    pages/, components/, services/, hooks/, types/
+
+  Arquivo src/services/api.ts:
+    - Instância do axios com baseURL lida de process.env.REACT_APP_API_URL.
+    - Interceptor de request: anexa Authorization: Bearer <token> se existir
+      token no localStorage.
+    - Interceptor de response: redireciona para /login em erros HTTP 401.
+
+Entregável: `npm start` sobe o React sem erros de compilação.
+
+-------------------------------------------------------------------------------
+TASK 01.5 — Arquivo .env.example unificado
+-------------------------------------------------------------------------------
+Criar .env.example na raiz do /backend com TODAS as variáveis documentadas:
+
+  # === SERVIDOR ===
+  NODE_ENV=development
+  PORT=3001
+
+  # === JWT ===
+  JWT_SECRET=troque-por-uma-string-aleatoria-longa-em-producao
+  JWT_EXPIRES_IN=8h
+
+  # === BANCO DE DADOS ===
+  DATABASE_URL=postgresql://proofchain:senha123@localhost:5432/proofchain_db
+
+  # === BLOCKCHAIN (Ethereum Sepolia Testnet) ===
+  # Obter URL gratuita em: https://www.infura.io ou https://www.alchemy.com
+  SEPOLIA_RPC_URL=https://sepolia.infura.io/v3/SEU_PROJECT_ID_AQUI
+
+  # ATENÇÃO: NUNCA commitar a chave real. Use uma wallet exclusiva para o backend.
+  # Obter ETH de teste em: https://sepoliafaucet.com
+  BACKEND_WALLET_PRIVATE_KEY=0xSUA_CHAVE_PRIVADA_AQUI
+
+  # Endereço do contrato após o deploy (preencher depois do TASK 02.3)
+  CONTRACT_ADDRESS=0xENDERECO_DO_CONTRATO_APOS_DEPLOY
+
+  # === CORS ===
+  CORS_ALLOWED_ORIGINS=http://localhost:3000
+
+Entregável: Arquivo criado, .gitignore do backend ignora .env.
+
+
+===============================================================================
+FEATURE 02 — SMART CONTRACT (BLOCKCHAIN LAYER)
+===============================================================================
+
+Objetivo: Escrever, testar localmente e deployar o contrato ProofChainRegistry
+na rede Sepolia. Esta é a feature de maior risco técnico — problemas aqui
+bloqueiam todas as features de integração blockchain.
+
+ATENÇÃO PRÉ-REQUISITO: Antes de iniciar esta feature, garantir que a wallet
+do backend possui ETH de teste na Sepolia. Acesse https://sepoliafaucet.com
+e solicite os fundos. O processo pode levar minutos a horas dependendo da fila.
+
+-------------------------------------------------------------------------------
+TASK 02.1 — Escrever o Smart Contract ProofChainRegistry.sol
+-------------------------------------------------------------------------------
+Criar /smart-contract/contracts/ProofChainRegistry.sol com:
+
+  Estado (storage):
+    mapping(string => bytes32) private _hashes
+      — mapeia UUID do Título de Dívida ao hash SHA-256.
+    mapping(string => uint256) private _timestamps
+      — mapeia UUID ao timestamp Unix do bloco de registro.
+    address public owner
+      — controla quem pode gravar (somente o backend).
+
+  Eventos:
+    event HashStored(string indexed id, bytes32 hash, uint256 timestamp)
+      — emitido a cada novo registro. Indexar id para facilitar buscas.
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)
+
+  Modificadores:
+    onlyOwner()
+      — reverte com "ProofChain: caller is not the owner"
+    hashNotExists(string memory id)
+      — reverte com "ProofChain: hash already registered for this ID"
+      — impede sobrescrita de hashes (imutabilidade)
+
+  Funções de escrita (custam gás):
+    constructor()
+      — define owner = msg.sender (wallet do backend).
+    storeHash(string memory id, bytes32 hash) external onlyOwner hashNotExists(id)
+      — valida: id não vazio, hash não é bytes32(0).
+      — grava _hashes[id] e _timestamps[id].
+      — emite HashStored.
+    transferOwnership(address newOwner) external onlyOwner
+      — valida newOwner != address(0).
+      — emite OwnershipTransferred.
+
+  Funções de leitura (view — custo ZERO de gás):
+    getHash(string memory id) external view returns (bytes32)
+    getTimestamp(string memory id) external view returns (uint256)
+    hashExists(string memory id) external view returns (bool)
+
+Entregável: Contrato compilado sem warnings com `npx hardhat compile`.
+
+-------------------------------------------------------------------------------
+TASK 02.2 — Testes do Smart Contract (TST-003)
+-------------------------------------------------------------------------------
+Criar /smart-contract/test/ProofChainRegistry.test.ts com os seguintes testes:
+
+  Suite: "ProofChainRegistry — Deploy"
+    [T1] Deve definir o deployer como owner após o deploy.
+
+  Suite: "ProofChainRegistry — storeHash"
+    [T2] Deve armazenar hash e permitir recuperação via getHash.
+    [T3] Deve registrar o timestamp correto no bloco.
+    [T4] Deve emitir evento HashStored com id, hash e timestamp corretos.
+    [T5] Deve rejeitar hash bytes32(0) (hash vazio inválido).
+    [T6] Deve rejeitar id vazio (string vazia).
+    [T7] Deve rejeitar registro duplicado para o mesmo id (hashNotExists).
+    [T8] Deve rejeitar chamada de endereço não-owner (onlyOwner).
+
+  Suite: "ProofChainRegistry — Funções view (custo zero)"
+    [T9]  getHash deve retornar bytes32(0) para id não registrado.
+    [T10] hashExists deve retornar false para id não registrado.
+    [T11] hashExists deve retornar true após registro.
+    [T12] getTimestamp deve retornar 0 para id não registrado.
+
+  Suite: "ProofChainRegistry — transferOwnership"
+    [T13] Deve transferir ownership corretamente.
+    [T14] Deve emitir OwnershipTransferred com endereços corretos.
+    [T15] Deve rejeitar transferência para address(0).
+    [T16] Deve rejeitar chamada de não-owner.
+
+Cobertura mínima esperada: 100% das funções e branches do contrato.
+Entregável: `npx hardhat test` — todos os testes passando, zero falhas.
+
+-------------------------------------------------------------------------------
+TASK 02.3 — Deploy na Rede Sepolia
+-------------------------------------------------------------------------------
+Criar /smart-contract/scripts/deploy.ts:
+
+  Lógica do script:
+    1. Conectar à rede Sepolia via SEPOLIA_RPC_URL do .env.
+    2. Usar wallet com BACKEND_WALLET_PRIVATE_KEY.
+    3. Verificar saldo da wallet antes do deploy (mínimo sugerido: 0.05 ETH).
+    4. Deploy do ProofChainRegistry.
+    5. Aguardar 5 confirmações de bloco.
+    6. Exibir no console:
+         - Endereço do contrato deployado.
+         - Hash da transação de deploy.
+         - Link para Etherscan Sepolia.
+    7. Salvar artefato de deploy em /smart-contract/deployments/sepolia.json:
+         { contractAddress, txHash, deployedAt, network: "sepolia" }
+
+  Após o deploy:
+    - Copiar CONTRACT_ADDRESS para o .env do backend.
+    - Verificar o contrato no Etherscan Sepolia (opcional mas recomendado).
+
+Entregável: Contrato deployado na Sepolia com endereço registrado no .env.
+Validação: Acessar https://sepolia.etherscan.io/address/<CONTRACT_ADDRESS>
+           e confirmar que o bytecode está presente.
+
+-------------------------------------------------------------------------------
+TASK 02.4 — Serviço de Comunicação Blockchain (Backend)
+-------------------------------------------------------------------------------
+Criar /backend/src/services/blockchainService.ts:
+
+  Função: initProvider()
+    - Cria JsonRpcProvider com SEPOLIA_RPC_URL.
+    - Cria Wallet com BACKEND_WALLET_PRIVATE_KEY conectada ao provider.
+    - Cria instância do contrato com CONTRACT_ADDRESS e ABI importada
+      do artefato de compilação do Hardhat.
+    - Singleton — inicializar uma vez e reutilizar.
+
+  Função: storeHashOnChain(id: string, hash: string): Promise<string>
+    - Converte hash hex string para bytes32.
+    - Chama contrato.storeHash(id, bytes32Hash).
+    - Implementa Promise.race com timeout de 60 segundos:
+        Se timeout → lança Error('BLOCKCHAIN_TIMEOUT').
+    - Aguarda 1 confirmação de bloco (waitForTransaction).
+    - Retorna tx.hash (o tx_hash para salvar no PostgreSQL).
+
+  Função: getHashFromChain(id: string): Promise<string>
+    - Chama contrato.getHash(id) — função view, custo zero.
+    - Retorna hash como string hexadecimal lowercase de 64 chars.
+    - Em caso de erro de rede: retorna null (não lançar exceção —
+      deixar a camada de serviço tratar como PENDING).
+
+  Função: checkChainConnection(): Promise<boolean>
+    - Tenta chamar provider.getBlockNumber().
+    - Retorna true se bem-sucedido, false caso contrário.
+    - Usar no health check da API.
+
+Entregável: Funções exportadas e tipadas. Sem testes de integração nesta task
+(dependem de rede real) — cobrir com mocks nos testes unitários do hashEngine.
+
+
+===============================================================================
+FEATURE 03 — BANCO DE DADOS (PRISMA SCHEMA + MIGRATIONS)
+===============================================================================
+
+Objetivo: Definir o schema completo do banco de dados com todos os models,
+enums, relações e constraints. Erros aqui impactam todas as features de
+backend — fazer com máxima atenção.
+
+-------------------------------------------------------------------------------
+TASK 03.1 — Schema Prisma completo
+-------------------------------------------------------------------------------
+Criar /backend/prisma/schema.prisma com os seguintes models:
+
+  Model User:
+    id           String   @id @default(uuid())
+    email        String   @unique
+    passwordHash String
+    name         String
+    role         UserRole @default(OPERATOR)
+    isActive     Boolean  @default(true)
+    createdAt    DateTime @default(now())
+    updatedAt    DateTime @updatedAt
+    Relações:
+      auditLogs           AuditLog[]
+      installmentPayments Installment[] @relation("PaymentUser")
+
+  Enum UserRole: OPERATOR | AUDITOR | ADMIN
+
+  Model TituloDivida:
+    id               String          @id @default(uuid())
+    cnpj_emissor     String
+    credor           String
+    valor_centavos   BigInt
+    data_vencimento  DateTime
+    hash_integridade String          @unique
+    tx_hash          String?
+    status           TituloStatus    @default(ACTIVE)
+    integrity_status IntegrityStatus @default(PENDING)
+    supersedes_id    String?
+    Relações auto-referenciadas (cadeia de custódia):
+      superseded_by  TituloDivida?  @relation("CustodyChain", fields: [supersedes_id], references: [id])
+      supersession   TituloDivida[] @relation("CustodyChain")
+    createdAt        DateTime @default(now())
+    updatedAt        DateTime @updatedAt
+    Relações:
+      auditLogs    AuditLog[]
+      installments Installment[]
+    @@map("titulos_divida")
+
+  Enum TituloStatus    : ACTIVE | SUPERSEDED | ERROR
+  Enum IntegrityStatus : VERIFIED | COMPROMISED | PENDING
+
+  Model Installment:
+    id                      String            @id @default(uuid())
+    tituloDividaId          String
+    numero_parcela          Int
+    valor_centavos          BigInt
+    data_vencimento_parcela DateTime
+    motivo                  String
+    autorizado_por          String
+    status_parcela          InstallmentStatus @default(PENDENTE)
+    data_hora_pagamento     DateTime?
+    usuario_pagamento_id    String?
+    createdAt               DateTime @default(now())
+    updatedAt               DateTime @updatedAt
+    Relações:
+      tituloDivida     TituloDivida @relation(fields: [tituloDividaId], references: [id])
+      usuario_pagamento User?       @relation("PaymentUser", fields: [usuario_pagamento_id], references: [id])
+    Constraint de unicidade:
+      @@unique([tituloDividaId, numero_parcela])
+    @@map("installments")
+
+  Enum InstallmentStatus: PENDENTE | PAGO | VENCIDO | CANCELADO
+
+  Model AuditLog:
+    id             String      @id @default(uuid())
+    tituloDividaId String
+    userId         String
+    action         AuditAction
+    clientIp       String
+    diff_snapshot  Json?
+    timestamp      DateTime    @default(now())
+    Relações:
+      tituloDivida TituloDivida @relation(fields: [tituloDividaId], references: [id])
+      user         User         @relation(fields: [userId], references: [id])
+    @@map("audit_logs")
+
+  Enum AuditAction:
+    INSERT | UPDATE | STATUS_CHANGE | INTEGRITY_BREACH_DETECTED |
+    CUSTODY_TRANSFER | VERIFICATION_REQUESTED | PAYMENT_REGISTERED |
+    INSTALLMENT_OVERDUE | INSTALLMENT_CANCELLED | EXPORT_GENERATED
+
+Entregável: schema.prisma sem erros de validação (`npx prisma validate`).
+
+-------------------------------------------------------------------------------
+TASK 03.2 — Migration inicial e seed
+-------------------------------------------------------------------------------
+Gerar e aplicar a migration inicial:
+
+  Comando: npx prisma migrate dev --name init
+
+  Criar /backend/prisma/seed.ts:
+    Dados de seed para desenvolvimento:
+      1 usuário ADMIN:
+         email: admin@proofchain.dev
+         senha: Admin@2025! (bcrypt hash, custo 12)
+         name: Administrador
+
+      1 usuário OPERATOR:
+         email: operador@proofchain.dev
+         senha: Operador@2025!
+         name: Operador Financeiro
+
+      1 usuário AUDITOR:
+         email: auditor@proofchain.dev
+         senha: Auditor@2025!
+         name: Auditor Interno
+
+    ATENÇÃO: seed usa bcrypt para hashear senhas. Nunca salvar senhas em
+    texto puro no banco.
+
+  Adicionar no package.json:
+    "prisma": { "seed": "ts-node prisma/seed.ts" }
+
+Entregável: `npx prisma migrate dev` e `npx prisma db seed` executam sem erros.
+Validação: `npx prisma studio` exibe as tabelas criadas e os 3 usuários de seed.
+
+-------------------------------------------------------------------------------
+TASK 03.3 — Trigger PostgreSQL de imutabilidade do hash
+-------------------------------------------------------------------------------
+Criar migration adicional com SQL raw para adicionar trigger:
+
+  Trigger: prevent_hash_update
+    - Tabela: titulos_divida
+    - Evento: BEFORE UPDATE
+    - Condição: NEW.hash_integridade != OLD.hash_integridade
+    - Ação: RAISE EXCEPTION 'Hash de integridade é imutável após emissão'
+
+  Implementação via migration Prisma com SQL raw:
+
+    CREATE OR REPLACE FUNCTION prevent_hash_update()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF NEW.hash_integridade != OLD.hash_integridade THEN
+        RAISE EXCEPTION
+          'ProofChain: hash_integridade is immutable after issuance';
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE TRIGGER trg_prevent_hash_update
+    BEFORE UPDATE ON titulos_divida
+    FOR EACH ROW EXECUTE FUNCTION prevent_hash_update();
+
+Entregável: Migration aplicada. Teste manual: tentar UPDATE no hash via
+Prisma Studio deve lançar exceção do banco de dados.
+
+
+===============================================================================
+FEATURE 04 — MOTOR DE HASHING E VERIFICAÇÃO (CORE)
+===============================================================================
+
+Objetivo: Implementar a função de hash SHA-256 determinística e o motor de
+verificação de integridade. São os módulos mais críticos do sistema — qualquer
+bug aqui compromete a segurança de todos os registros.
+
+-------------------------------------------------------------------------------
+TASK 04.1 — hashEngine.ts (Motor SHA-256)
+-------------------------------------------------------------------------------
+Criar /backend/src/services/hashEngine.ts:
+
+  Interface de entrada:
+    interface HashInput {
+      id              : string   // UUID v4
+      cnpj_emissor    : string   // 14 dígitos
+      valor_centavos  : number | bigint
+      data_vencimento : Date
+    }
+
+  Função principal: generateHash(input: HashInput): string
+    Implementação ESTRITA conforme RN-REC-002:
+      1. Converter valor_centavos para string decimal.
+         Se BigInt: input.valor_centavos.toString()
+         Se number: Math.round(input.valor_centavos).toString()
+      2. Converter data_vencimento para ISO 8601 UTC:
+         input.data_vencimento.toISOString()
+      3. Concatenar SEM separadores:
+         raw = id + cnpj_emissor + valorStr + dataStr
+      4. Calcular SHA-256:
+         crypto.createHash('sha256').update(raw, 'utf8').digest('hex')
+      5. Retornar string hexadecimal lowercase de 64 caracteres.
+
+    REGRA CRÍTICA: Esta função NÃO pode ser alterada após o primeiro deploy
+    em produção. Qualquer mudança invalida todos os hashes históricos.
+    Adicionar comentário de aviso no código.
+
+  Função auxiliar: validateHashFormat(hash: string): boolean
+    - Verifica se o hash é uma string hexadecimal de exatamente 64 chars.
+    - Regex: /^[a-f0-9]{64}$/
+
+Entregável: Módulo exportado, sem dependências externas além de 'crypto'
+(nativo do Node.js).
+
+-------------------------------------------------------------------------------
+TASK 04.2 — Testes unitários do hashEngine (TST-001)
+-------------------------------------------------------------------------------
+Criar /backend/tests/unit/hashEngine.test.ts:
+
+  Suite: "HashEngine — Determinismo (TST-001)"
+    [T1] Deve gerar hash idêntico para inputs exatamente iguais (10 iterações).
+    [T2] Deve gerar hash diferente ao mudar apenas o id.
+    [T3] Deve gerar hash diferente ao mudar apenas o cnpj_emissor.
+    [T4] Deve gerar hash diferente ao mudar apenas o valor_centavos.
+         Caso concreto: 5000000 (R$50.000) vs 500000 (R$5.000).
+    [T5] Deve gerar hash diferente ao mudar apenas a data_vencimento.
+    [T6] Deve retornar string hexadecimal lowercase de exatamente 64 caracteres.
+    [T7] Deve aceitar valor_centavos como BigInt e produzir o mesmo hash
+         que o equivalente number.
+
+  Suite: "HashEngine — Casos de borda"
+    [T8]  Deve lançar erro se id for string vazia.
+    [T9]  Deve lançar erro se valor_centavos for zero ou negativo.
+    [T10] Deve lançar erro se data_vencimento não for um Date válido.
+    [T11] Deve tratar datas em diferentes fusos horários de forma consistente
+          (sempre converter para UTC antes do hash).
+
+  Suite: "HashEngine — Valor de referência fixo"
+    [T12] Dado o input fixo abaixo, deve produzir exatamente o hash esperado.
+          Isso garante que refatorações não mudem silenciosamente o algoritmo.
+
+          Input de referência:
+            id              : '550e8400-e29b-41d4-a716-446655440000'
+            cnpj_emissor    : '12345678000195'
+            valor_centavos  : 4000000  (R$ 40.000,00)
+            data_vencimento : new Date('2026-12-31T00:00:00.000Z')
+
+          Hash esperado: calcular na primeira execução e fixar como constante
+          no teste. Nunca atualizar esta constante — ela é a âncora de
+          regressão do sistema.
+
+Cobertura mínima: 90% de statements no módulo hashEngine.ts.
+Entregável: `npm test -- hashEngine` — todos os testes passando.
+
+-------------------------------------------------------------------------------
+TASK 04.3 — verificationService.ts (Motor de Auditoria)
+-------------------------------------------------------------------------------
+Criar /backend/src/services/verificationService.ts:
+
+  Enum de resultado:
+    enum VerificationStatus {
+      VERIFIED    = 'VERIFIED',
+      COMPROMISED = 'COMPROMISED',
+      PENDING     = 'PENDING',
+      REMOVED     = 'REMOVED'
+    }
+
+  Interface de resultado:
+    interface VerificationResult {
+      status          : VerificationStatus
+      sqlHash         : string       // hash recalculado dos dados atuais
+      blockchainHash  : string | null // hash retornado da blockchain
+      isMatch         : boolean
+      checkedAt       : Date
+    }
+
+  Função principal:
+    verifyTituloIntegrity(titulo: TituloDivida): Promise<VerificationResult>
+
+    Lógica:
+      1. Recalcular hash com os dados ATUAIS do PostgreSQL via generateHash().
+      2. Chamar getHashFromChain(titulo.id) via blockchainService.
+      3. Aplicar as regras:
+           blockchainHash === null
+             → status: PENDING (blockchain inacessível)
+           sqlHash === blockchainHash
+             → status: VERIFIED
+           sqlHash !== blockchainHash
+             → status: COMPROMISED
+      4. Retornar VerificationResult completo.
+
+  Função auxiliar:
+    verifyBatch(ids: string[]): Promise<Map<string, VerificationResult>>
+      - Verificar múltiplos títulos em paralelo com Promise.allSettled.
+      - Usar para o cron job de varredura (RN-INV-001).
+      - Limitar a 10 chamadas simultâneas (evitar rate limit do RPC).
+
+-------------------------------------------------------------------------------
+TASK 04.4 — Testes unitários do verificationService (TST-002)
+-------------------------------------------------------------------------------
+Criar /backend/tests/unit/verificationService.test.ts:
+
+  Setup: Usar jest.mock para mockar blockchainService.getHashFromChain.
+
+  Suite: "VerificationService — Detecção de Adulteração (TST-002)"
+    [T1] Deve retornar VERIFIED quando hash SQL === hash blockchain.
+    [T2] Deve retornar COMPROMISED quando valor foi adulterado no banco.
+         Simular: valor_centavos alterado de 4000000 para 400000.
+    [T3] Deve retornar COMPROMISED quando cnpj_emissor foi adulterado.
+    [T4] Deve retornar COMPROMISED quando data_vencimento foi adulterada.
+    [T5] Deve retornar PENDING quando getHashFromChain retorna null
+         (blockchain inacessível).
+    [T6] Deve incluir sqlHash e blockchainHash no resultado para comparação.
+    [T7] Deve registrar checkedAt como data/hora atual.
+
+  Suite: "VerificationService — verifyBatch"
+    [T8] Deve processar múltiplos títulos em paralelo.
+    [T9] Deve retornar PENDING individualmente para itens cujo blockchain
+         falhou, sem afetar os demais itens do batch.
+
+Entregável: `npm test -- verificationService` — todos os testes passando.
+
+
+===============================================================================
+FEATURE 05 — AUTENTICAÇÃO E AUTORIZAÇÃO (JWT)
+===============================================================================
+
+Objetivo: Implementar o sistema de login com JWT e controle de acesso por
+roles. Fazer DEPOIS das features de hashing e blockchain para não bloquear
+o desenvolvimento core.
+
+-------------------------------------------------------------------------------
+TASK 05.1 — authService.ts
+-------------------------------------------------------------------------------
+Criar /backend/src/services/authService.ts:
+
+  Função: login(email: string, password: string): Promise<{ token: string, user: SafeUser }>
+    1. Buscar usuário por email no PostgreSQL (Prisma).
+    2. Se não encontrado: lançar erro genérico "Credenciais inválidas"
+       (não revelar se o email existe ou não — segurança).
+    3. Verificar se user.isActive === true. Se não: lançar "Conta desativada".
+    4. Comparar password com passwordHash via bcrypt.compare.
+    5. Se não confere: lançar "Credenciais inválidas".
+    6. Gerar JWT com payload: { sub: user.id, email, role, iat, exp }.
+       Usar JWT_SECRET e JWT_EXPIRES_IN do .env.
+    7. Retornar token e SafeUser (sem passwordHash).
+
+  Tipo SafeUser: Omit<User, 'passwordHash'>
+
+-------------------------------------------------------------------------------
+TASK 05.2 — Middleware de autenticação e autorização
+-------------------------------------------------------------------------------
+Criar /backend/src/middleware/auth.ts:
+
+  Middleware: authenticate(req, res, next)
+    1. Extrair token do header: Authorization: Bearer <token>.
+    2. Se ausente: retornar HTTP 401 { error: 'Token não fornecido' }.
+    3. Verificar token com jwt.verify(token, JWT_SECRET).
+    4. Se inválido ou expirado: HTTP 401 { error: 'Token inválido ou expirado' }.
+    5. Buscar user no banco pelo sub do payload (verificar se ainda existe
+       e está ativo — evitar tokens de usuários desativados).
+    6. Anexar req.user = { id, email, role } para uso nas rotas.
+
+  Middleware factory: authorize(...roles: UserRole[])
+    Retorna middleware que verifica se req.user.role está na lista de roles
+    permitidos. Se não: HTTP 403 { error: 'Acesso negado' }.
+
+  Uso nas rotas:
+    router.post('/titulos', authenticate, authorize('OPERATOR', 'ADMIN'), handler)
+    router.get('/audit-logs', authenticate, authorize('AUDITOR', 'ADMIN'), handler)
+
+-------------------------------------------------------------------------------
+TASK 05.3 — Middleware de AuditLog automático
+-------------------------------------------------------------------------------
+Criar /backend/src/middleware/auditLog.ts:
+
+  Função: createAuditLog(params: AuditLogParams): Promise<void>
+    Parâmetros:
+      tituloDividaId : string
+      userId         : string (OBRIGATÓRIO — lançar erro se ausente)
+      action         : AuditAction
+      clientIp       : string
+      diffSnapshot?  : { before: object, after: object }
+
+    Implementação:
+      - Criar registro no AuditLog via Prisma dentro de uma transação ACID.
+      - Se userId for null/undefined: lançar Error('userId is required for
+        audit logging') e abortar (TST-004).
+
+  Função utilitária: extractClientIp(req: Request): string
+    - Ler X-Forwarded-For header (proxy reverso) ou req.socket.remoteAddress.
+    - Retornar IP sanitizado.
+
+-------------------------------------------------------------------------------
+TASK 05.4 — Rotas de autenticação
+-------------------------------------------------------------------------------
+Criar /backend/src/controllers/authController.ts:
+
+  POST /api/auth/login
+    Body: { email: string, password: string }
+    Validações:
+      - email: formato válido de e-mail.
+      - password: mínimo 8 caracteres.
+    Rate limiting específico: 5 tentativas por IP em 15 minutos.
+      (Usar express-rate-limit com store em memória para MVP)
+    Resposta de sucesso (HTTP 200):
+      { token: string, user: SafeUser, expiresIn: '8h' }
+    Resposta de erro (HTTP 401):
+      { error: 'Credenciais inválidas' }
+      NUNCA revelar se o e-mail existe ou qual campo está errado.
+
+  GET /api/auth/me
+    Autenticado: qualquer role.
+    Retorna os dados do usuário logado (req.user).
+
+Entregável: `curl -X POST /api/auth/login` com credenciais do seed retorna JWT.
+
+
+===============================================================================
+FEATURE 06 — EMISSÃO DE TÍTULO DE DÍVIDA (CORE BUSINESS)
+===============================================================================
+
+Objetivo: Implementar o fluxo completo de emissão — do formulário React até
+a ancoragem na blockchain e persistência no PostgreSQL. É o coração do sistema.
+
+-------------------------------------------------------------------------------
+TASK 06.1 — tituloService.ts (lógica de emissão)
+-------------------------------------------------------------------------------
+Criar /backend/src/services/tituloService.ts:
+
+  Função: createTitulo(data: CreateTituloDTO, userId: string, clientIp: string)
+    Implementar a sequência atômica RN-REC-003:
+
+    1. VALIDAÇÃO:
+       - Validar CNPJ via algoritmo do dígito verificador.
+       - Validar data_vencimento > Date.now().
+       - Validar valor_centavos > 0.
+
+    2. GERAÇÃO DE ID:
+       - Gerar UUID v4 com biblioteca 'uuid'.
+
+    3. HASH:
+       - Chamar generateHash({ id, cnpj_emissor, valor_centavos, data_vencimento }).
+
+    4. BLOCKCHAIN (etapa crítica):
+       - Chamar storeHashOnChain(id, hash).
+       - Se lançar BLOCKCHAIN_TIMEOUT: throw new Error('BLOCKCHAIN_TIMEOUT').
+       - Se lançar qualquer outro erro: throw new Error('BLOCKCHAIN_ERROR').
+       - Nenhum dado é gravado no banco se esta etapa falhar.
+
+    5. PERSISTÊNCIA SQL (apenas após sucesso na blockchain):
+       - Usar prisma.$transaction() para garantir atomicidade.
+       - Dentro da transação:
+           a. Criar TituloDivida com todos os campos + tx_hash.
+           b. Criar AuditLog com action INSERT.
+       - Se a transação falhar: o hash já está na blockchain mas sem registro
+         SQL. Logar o erro com id e tx_hash para recuperação manual.
+
+    6. RETORNO:
+       - Retornar o TituloDivida criado + link Etherscan.
+
+  Validação de CNPJ (implementar ou usar biblioteca):
+    - 14 dígitos numéricos.
+    - Algoritmo dos dois dígitos verificadores.
+    - Rejeitar CNPJs conhecidamente inválidos (todos iguais: 00000000000000).
+
+-------------------------------------------------------------------------------
+TASK 06.2 — Endpoint POST /api/titulos
+-------------------------------------------------------------------------------
+Criar /backend/src/controllers/tituloController.ts:
+
+  POST /api/titulos
+    Autenticação: authenticate + authorize('OPERATOR', 'ADMIN')
+    Body esperado:
+      {
+        cnpj_emissor   : string  // "12.345.678/0001-95" ou "12345678000195"
+        credor         : string  // 3–200 caracteres
+        valor_centavos : number  // em centavos (backend converte)
+        data_vencimento: string  // ISO 8601
+      }
+
+    Tratamento de erros por tipo:
+      BLOCKCHAIN_TIMEOUT → HTTP 504 { error: 'Timeout na confirmação blockchain.
+                           Tente novamente.' }
+      BLOCKCHAIN_ERROR   → HTTP 502 { error: 'Erro na rede blockchain.' }
+      CNPJ inválido      → HTTP 400 { error: 'CNPJ inválido.' }
+      Data no passado    → HTTP 400 { error: 'Data de vencimento deve ser futura.' }
+      Hash duplicado     → HTTP 409 { error: 'Registro já existe.' }
+
+    Resposta de sucesso (HTTP 201):
+      {
+        id               : string
+        hash_integridade : string
+        tx_hash          : string
+        etherscan_url    : string
+        createdAt        : string
+      }
+
+  GET /api/titulos
+    Autenticação: authenticate (qualquer role)
+    Query params: page (default 1), limit (default 20), status
+    Retorna lista paginada. NUNCA retornar passwordHash de usuários.
+
+  GET /api/titulos/:id
+    Autenticação: authenticate (qualquer role)
+    Retorna dados completos do título + installments (sem campos privados
+    de parcelas para role OPERATOR básico).
+
+-------------------------------------------------------------------------------
+TASK 06.3 — Formulário de emissão (Frontend)
+-------------------------------------------------------------------------------
+Criar /frontend/src/pages/Issuance.tsx:
+
+  Campos do formulário:
+    - CNPJ Emissor: input com máscara XX.XXX.XXX/XXXX-XX.
+      Validar formato no onChange. Exibir feedback de erro inline.
+    - Nome do Credor: input texto, 3–200 chars.
+    - Valor: CurrencyInput — exibir em R$ (ex: R$ 40.000,00) mas enviar
+      ao backend em centavos (4000000).
+    - Data de Vencimento: date picker, bloquear datas passadas.
+
+  Comportamento do submit:
+    1. Validar todos os campos antes de enviar.
+    2. Desabilitar botão submit e exibir spinner + texto
+       "Ancorando na blockchain... (pode levar até 60 segundos)"
+    3. POST para /api/titulos.
+    4. Em sucesso: exibir comprovante com ID, hash e link Etherscan.
+    5. Em erro BLOCKCHAIN_TIMEOUT: exibir mensagem amigável explicando
+       que a rede estava lenta e sugerindo nova tentativa.
+
+  Componente CurrencyInput (criar em /components/CurrencyInput.tsx):
+    - Aceita digitação em formato brasileiro (vírgula como decimal).
+    - Exibe valor formatado: R$ 1.500.000,00.
+    - Armazena e emite valor em centavos (integer).
+
+
+===============================================================================
+FEATURE 07 — VERIFICAÇÃO PÚBLICA DE AUTENTICIDADE (DEMO PRINCIPAL)
+===============================================================================
+
+Objetivo: A tela mais importante do sistema. É o argumento visual que qualquer
+banca entende em 10 segundos. Prioridade máxima de UX.
+
+-------------------------------------------------------------------------------
+TASK 07.1 — Endpoint público de verificação GET /api/titulos/:id/verify
+-------------------------------------------------------------------------------
+Criar lógica em tituloController.ts:
+
+  GET /api/titulos/:id/verify
+    SEM autenticação (endpoint público).
+    Rate limiting: 100 req/min por IP.
+
+    Fluxo:
+      1. Buscar TituloDivida por id no PostgreSQL.
+      2. Se não encontrado no SQL:
+           Checar se existe na blockchain via hashExists(id).
+           Se existe on-chain mas não no SQL:
+             → { status: 'REMOVED', message: 'Registro foi removido do banco' }
+           Se não existe em nenhum lugar:
+             → HTTP 404 { error: 'Título de Dívida não encontrado' }
+      3. Chamar verifyTituloIntegrity(titulo).
+      4. Atualizar integrity_status no banco com o resultado.
+
+    Dados retornados (público — sem informações sensíveis):
+      {
+        id               : string
+        credor           : string
+        valor_reais      : string        // ex: "R$ 40.000,00"
+        data_vencimento  : string
+        emitido_em       : string
+        status           : 'VERIFIED' | 'COMPROMISED' | 'PENDING' | 'REMOVED'
+        hash_integridade : string        // hash do SQL (para comparação visual)
+        blockchain_hash  : string | null // hash da blockchain
+        tx_hash          : string
+        etherscan_url    : string
+        verificado_em    : string
+        // Parcelas (resumo público — SEM motivo, SEM autorizado_por):
+        total_parcelas   : number
+        parcelas_pagas   : number
+        parcelas_vencidas: number
+      }
+
+    NUNCA retornar neste endpoint:
+      - motivo das parcelas
+      - autorizado_por
+      - usuario_pagamento_id
+      - dados de AuditLog
+      - IPs ou userId de operadores
+
+-------------------------------------------------------------------------------
+TASK 07.2 — Tela pública de verificação (Frontend)
+-------------------------------------------------------------------------------
+Criar /frontend/src/pages/PublicVerify.tsx:
+
+  Layout da tela:
+    Seção 1 — Campo de busca:
+      Input grande e centralizado com placeholder "Digite o ID do Título de Dívida"
+      Botão "Verificar Autenticidade"
+      Loading state: skeleton ou spinner + "Consultando ledger descentralizado..."
+
+    Seção 2 — Resultado (exibido após busca):
+      Distintivo visual grande (IntegrityBadge) no topo:
+        VERDE  (#10B981): "✓ REGISTRO ÍNTEGRO — Dados não foram alterados"
+        VERMELHO (#EF4444): "✗ ALERTA DE FRAUDE — Dados adulterados detectados"
+        AMARELO (#F59E0B): "⚠ VERIFICAÇÃO PENDENTE — Blockchain temporariamente
+                            inacessível"
+
+      Card de dados do registro:
+        Credor, Valor, Vencimento, Data de emissão, ID.
+
+      Resumo de parcelas (público):
+        Total de parcelas, pagas, vencidas. SEM motivo ou autorizações.
+
+  Componente IntegrityBadge (/components/IntegrityBadge.tsx):
+    Props: status, onClickVerified (callback para abrir modal)
+    - Status VERIFIED: badge verde clicável → abre VerificationModal.
+    - Status COMPROMISED: badge vermelho, não clicável, exibe apenas alerta.
+    - Status PENDING: badge amarelo com ícone de aviso.
+    - WCAG: não depender apenas de cor — incluir ícone e texto descritivo.
+
+  Componente VerificationModal (/components/VerificationModal.tsx):
+    Aberto ao clicar no badge verde.
+    Conteúdo:
+      Comparação lado a lado:
+        Coluna esquerda: "Dados no Banco (PostgreSQL)" — dados atuais.
+        Coluna direita : "Prova na Blockchain (Sepolia)" — hash on-chain.
+      Hash de integridade (ambos iguais quando VERIFIED).
+      Link "Ver transação no Etherscan ↗" abrindo em nova aba.
+      Timestamp do bloco de registro.
+
+
+===============================================================================
+FEATURE 08 — TRILHA FORENSE E AUDITORIA (AUTENTICADO)
+===============================================================================
+
+Objetivo: Quando uma fraude é detectada, fornecer ao auditor autenticado as
+informações precisas de quem, quando e de onde partiu a adulteração.
+
+-------------------------------------------------------------------------------
+TASK 08.1 — Endpoints de AuditLog
+-------------------------------------------------------------------------------
+Criar rotas em /backend/src/controllers/auditLogController.ts:
+
+  GET /api/audit-logs
+    Autenticação: AUDITOR ou ADMIN.
+    Query params:
+      - page, limit (paginação).
+      - tituloDividaId (filtrar por título específico).
+      - action (filtrar por tipo de ação).
+      - startDate, endDate (filtrar por período).
+    Retornar logs com dados do usuário (name, email) e do título.
+
+  GET /api/audit-logs/titulo/:id
+    Autenticação: AUDITOR ou ADMIN.
+    Retornar histórico forense completo de um Título de Dívida específico:
+      - Todos os logs em ordem cronológica.
+      - Para logs de INTEGRITY_BREACH_DETECTED: destacar com flag isForensic: true.
+      - Incluir diff_snapshot quando disponível.
+
+-------------------------------------------------------------------------------
+TASK 08.2 — Tela de trilha forense (Frontend)
+-------------------------------------------------------------------------------
+Criar /frontend/src/pages/AuditTrail.tsx:
+
+  Acessível apenas para roles AUDITOR e ADMIN (rota protegida no React Router).
+
+  Layout:
+    Filtros no topo: por ID do Título, por tipo de ação, por período.
+    Tabela de logs com colunas:
+      Data/Hora | Usuário | IP | Ação | Título de Dívida | Detalhes
+
+    Para linhas com action = INTEGRITY_BREACH_DETECTED:
+      Destacar em vermelho com ícone de alerta.
+      Botão "Ver diff" que expande o diff_snapshot mostrando
+      antes/depois dos campos alterados.
+
+
+===============================================================================
+FEATURE 09 — GESTÃO DE PARCELAS E PAGAMENTOS
+===============================================================================
+
+Objetivo: Implementar o registro de parcelamentos com dados sensíveis
+(motivo, autorizado_por) e o fluxo de registro de pagamentos com
+rastreabilidade completa.
+
+-------------------------------------------------------------------------------
+TASK 09.1 — installmentService.ts
+-------------------------------------------------------------------------------
+Criar /backend/src/services/installmentService.ts:
+
+  Função: createInstallments(
+    tituloDividaId: string,
+    parcelas: CreateInstallmentDTO[],
+    userId: string,
+    clientIp: string
+  )
+    Validações (RN-PAG-001, RN-PAG-002):
+      1. Verificar que o Título de Dívida existe e está ACTIVE.
+      2. Verificar que não existem parcelas já cadastradas para este título.
+      3. Somar valor_centavos de todas as parcelas.
+         Se soma !== titulo.valor_centavos → HTTP 422 com mensagem explicando
+         a diferença em R$.
+      4. Verificar que numero_parcela é sequencial sem gaps (1, 2, 3...).
+      5. Verificar que motivo tem 10–500 caracteres.
+      6. Verificar que autorizado_por não está vazio.
+
+    Persistência (prisma.$transaction):
+      - Criar todos os registros Installment.
+      - Criar AuditLog com action INSERT para cada parcela
+        (ou um log consolidado referenciando o tituloDividaId).
+
+  Função: registerPayment(
+    installmentId: string,
+    userId: string,
+    clientIp: string
+  )
+    Validações (RN-PAG-003, RN-PAG-004):
+      1. Buscar parcela por id.
+      2. Se status_parcela === 'PAGO': HTTP 403 "Parcela já foi paga."
+      3. Se status_parcela === 'CANCELADO': HTTP 403 "Parcela cancelada."
+
+    Persistência (prisma.$transaction):
+      - UPDATE Installment:
+          status_parcela       = 'PAGO'
+          data_hora_pagamento  = new Date()  // gerado pelo servidor, nunca pelo cliente
+          usuario_pagamento_id = userId       // do JWT, nunca do body
+      - CREATE AuditLog action = PAYMENT_REGISTERED.
+
+    ATENÇÃO: data_hora_pagamento deve ser o timestamp do servidor no momento
+    exato da operação. Nunca aceitar data/hora do corpo da requisição.
+
+-------------------------------------------------------------------------------
+TASK 09.2 — Endpoints de parcelas
+-------------------------------------------------------------------------------
+  POST /api/titulos/:id/installments
+    Autenticação: OPERATOR ou ADMIN.
+    Body: Array de parcelas com numero_parcela, valor_centavos,
+    data_vencimento_parcela, motivo, autorizado_por.
+
+  GET /api/titulos/:id/installments
+    Autenticação: OPERATOR ou ADMIN (dados internos completos).
+    Retornar todas as parcelas com todos os campos (incluindo motivo,
+    autorizado_por, data_hora_pagamento, usuario_pagamento).
+
+  PATCH /api/installments/:id/pay
+    Autenticação: OPERATOR ou ADMIN.
+    Body: vazio (todos os dados capturados do servidor e do JWT).
+    Retornar parcela atualizada com data_hora_pagamento e nome do usuário.
+
+  GET /api/titulos/:id/installments/export
+    Autenticação: AUDITOR ou ADMIN.
+    Query param: format=xlsx|csv (default: xlsx).
+    Gerar arquivo com colunas:
+      Nº Parcela, Valor (R$), Vencimento, Motivo, Autorizado Por,
+      Status, Data/Hora do Pagamento, Registrado Por.
+    Registrar no AuditLog action = EXPORT_GENERATED.
+    Retornar como download com Content-Disposition: attachment.
+
+-------------------------------------------------------------------------------
+TASK 09.3 — Tela interna de parcelas (Frontend)
+-------------------------------------------------------------------------------
+Criar /frontend/src/pages/InstallmentDetail.tsx:
+
+  Acessível via /titulos/:id/parcelas (rota autenticada).
+
+  Tabela de parcelas com colunas:
+    Nº | Valor | Vencimento | Motivo | Autorizado Por | Status | Pago em | Registrado por
+
+  Status visual das parcelas:
+    PENDENTE  : badge cinza
+    PAGO      : badge verde (#10B981)
+    VENCIDO   : badge âmbar (#F59E0B) — destacar linha completa
+    CANCELADO : badge vermelho com texto riscado
+
+  Botão "Registrar Pagamento" em parcelas com status PENDENTE.
+  Confirmação modal antes de registrar: "Confirmar pagamento de R$ X.XXX,XX
+  da parcela Nº N? Esta ação não pode ser desfeita."
+
+  Botão "Exportar (.xlsx)" para AUDITOR e ADMIN.
+
+
+===============================================================================
+FEATURE 10 — DASHBOARD E MÉTRICAS GERENCIAIS
+===============================================================================
+
+Objetivo: Painel administrativo com métricas do portfólio e status de
+integridade. Fazer por último — depende de dados reais nas features anteriores.
+
+-------------------------------------------------------------------------------
+TASK 10.1 — Endpoint de métricas GET /api/dashboard/metrics
+-------------------------------------------------------------------------------
+  Autenticação: qualquer role autenticado.
+
+  Dados retornados (RN-DASH-001):
+    {
+      total_ativos_reais        : string  // "R$ 1.240.000,00"
+      total_titulos_ativos      : number
+      total_titulos_comprometidos: number
+      percentual_integridade    : number  // 0–100
+      emissoes_30_dias          : [       // para gráfico de barras
+        { data: '2025-01-01', quantidade: 3, valor_reais: 'R$ 120.000,00' }
+      ]
+      distribuicao_integridade  : {       // para gráfico de pizza
+        verificados   : number,
+        comprometidos : number,
+        pendentes     : number
+      }
+      ultima_varredura          : {
+        executada_em  : string
+        total_verificados: number
+        anomalias_detectadas: number
+      }
+    }
+
+  Performance: usar agregações SQL via Prisma (não calcular em JS).
+  Cache: resultado pode ser cacheado por 5 minutos (simples variável em memória).
+
+-------------------------------------------------------------------------------
+TASK 10.2 — Dashboard (Frontend)
+-------------------------------------------------------------------------------
+Criar /frontend/src/pages/Dashboard.tsx:
+
+  Cards de métricas no topo (grid 2x2):
+    Card 1: Total sob custódia (R$) — valor grande em destaque.
+    Card 2: Títulos ativos — número com ícone.
+    Card 3: Integridade da carteira — percentual com cor semântica.
+             Verde se >= 95%, amarelo se >= 80%, vermelho se < 80%.
+    Card 4: Alertas de fraude — contador de comprometidos em vermelho.
+
+  Gráfico 1 — Emissões nos últimos 30 dias (Recharts BarChart):
+    Eixo X: datas. Eixo Y: quantidade de emissões.
+    Hover tooltip mostrando valor em R$ do dia.
+    Cor: azul corporativo (#3B82F6).
+
+  Gráfico 2 — Status de integridade (Recharts PieChart):
+    Fatias: Verificados (verde), Comprometidos (vermelho), Pendentes (cinza).
+    Legend com contagens absolutas.
+    Hover tooltip com percentual.
+
+  Rodapé do dashboard:
+    "Última varredura de integridade: <data> — X títulos verificados,
+    Y anomalias detectadas."
+
+
+===============================================================================
+FEATURE 11 — ROTINA AUTOMÁTICA DE INTEGRIDADE (CRON JOB)
+===============================================================================
+
+Objetivo: Varredura periódica automática que detecta adulterações sem
+intervenção humana, conforme RN-INV-001 e RN-PAG-006.
+
+-------------------------------------------------------------------------------
+TASK 11.1 — integrityScanner.ts (Cron Job)
+-------------------------------------------------------------------------------
+Criar /backend/src/jobs/integrityScanner.ts:
+
+  Cron schedule: a cada 15 minutos ('*/15 * * * *').
+  Usar biblioteca 'node-cron'.
+
+  Lógica da varredura:
+    1. Buscar todos os TituloDivida com status = 'ACTIVE'.
+    2. Chamar verifyBatch(ids) do verificationService.
+    3. Para cada resultado:
+         Se status mudou para COMPROMISED:
+           - UPDATE integrity_status = 'COMPROMISED' no PostgreSQL.
+           - CREATE AuditLog action = INTEGRITY_BREACH_DETECTED.
+           - Logar no console com nível ERROR incluindo o id e hashes.
+         Se status é VERIFIED e era COMPROMISED antes:
+           - UPDATE integrity_status = 'VERIFIED'.
+           - CREATE AuditLog action = STATUS_CHANGE.
+    4. Verificar parcelas vencidas (RN-PAG-006):
+         Buscar Installments com:
+           status_parcela = 'PENDENTE'
+           data_vencimento_parcela < new Date()
+         Para cada uma:
+           - UPDATE status_parcela = 'VENCIDO'.
+           - CREATE AuditLog action = INSTALLMENT_OVERDUE.
+    5. Salvar resultado da varredura em uma tabela ou variável de
+       memória para exibir no dashboard (RF09.2).
+
+  Tratamento de erros:
+    - Usar try/catch em toda a varredura.
+    - Falha na varredura NÃO deve derrubar o servidor — apenas logar.
+    - Se blockchain inacessível: manter integrity_status = 'PENDING',
+      não alterar para COMPROMISED.
+
+  Inicialização:
+    - Registrar o cron job em src/app.ts na inicialização do servidor.
+    - Exibir log: "Integrity scanner scheduled: every 15 minutes".
+
+
+===============================================================================
+FEATURE 12 — TESTES DE INTEGRAÇÃO E COBERTURA FINAL
+===============================================================================
+
+Objetivo: Fechar a suite de testes com os testes de integração que validam
+os fluxos end-to-end do sistema.
+
+-------------------------------------------------------------------------------
+TASK 12.1 — Testes de integração (TST-004 e TST-005)
+-------------------------------------------------------------------------------
+Criar /backend/tests/integration/auditLog.test.ts (TST-004):
+
+  Usar banco de dados de teste separado (DATABASE_URL_TEST no .env).
+  Setup: rodar migrations no banco de teste antes dos testes.
+  Teardown: limpar tabelas após cada teste.
+
+  [T1] Deve gerar AuditLog em qualquer INSERT na tabela titulos_divida.
+  [T2] Deve abortar transação e lançar erro quando userId é ausente.
+  [T3] Deve gerar AuditLog correto para PAYMENT_REGISTERED.
+  [T4] Deve incluir diff_snapshot correto em operações de UPDATE.
+
+Criar /backend/tests/integration/installment.test.ts (TST-005):
+
+  [T5] Deve rejeitar plano de parcelas com soma divergente do valor total.
+       Caso: R$ 40.000 dividido em 3 parcelas de R$ 10.000 (faltam R$ 10.000).
+  [T6] Deve aceitar parcelas de valores desiguais cuja soma bate.
+       Caso: entrada R$ 20.000 + 3x R$ 6.666,67 ≈ R$ 40.000.
+  [T7] Deve impedir pagamento de parcela já paga (HTTP 403).
+  [T8] Deve registrar data_hora_pagamento gerada pelo servidor (não pelo cliente).
+  [T9] Deve registrar usuario_pagamento_id do JWT (não do body).
+
+-------------------------------------------------------------------------------
+TASK 12.2 — Relatório de cobertura
+-------------------------------------------------------------------------------
+Configurar jest.config.ts para gerar relatório de cobertura:
+
+  coverageThreshold:
+    global:
+      statements : 80
+      branches   : 75
+      functions  : 80
+      lines      : 80
+
+  Módulos críticos com threshold elevado (90%):
+    - src/services/hashEngine.ts
+    - src/services/verificationService.ts
+
+  Executar: npm test -- --coverage
+  O build falha se cobertura estiver abaixo dos thresholds.
+
+-------------------------------------------------------------------------------
+TASK 12.3 — README.md (setup em 5 comandos)
+-------------------------------------------------------------------------------
+Criar README.md na raiz do projeto com:
+
+  Seção: Pré-requisitos
+    - Node.js 18+
+    - Docker e Docker Compose (para PostgreSQL)
+    - Conta Infura ou Alchemy (para RPC Sepolia)
+    - Wallet com ETH de teste na Sepolia
+
+  Seção: Setup em 5 passos
+    1. git clone + cd proofchain
+    2. Copiar .env.example → .env e preencher as variáveis
+    3. docker-compose up -d (sobe o PostgreSQL)
+    4. cd backend && npm install && npx prisma migrate dev && npx prisma db seed
+    5. npm run dev (backend na porta 3001)
+
+    Frontend:
+    6. cd ../frontend && npm install && npm start (porta 3000)
+
+    Smart Contract (primeira vez):
+    7. cd ../smart-contract && npm install
+    8. npx hardhat test (validar contrato localmente)
+    9. npx hardhat run scripts/deploy.ts --network sepolia
+    10. Copiar CONTRACT_ADDRESS para o .env do backend
+
+  Seção: Credenciais de teste (seed)
+    admin@proofchain.dev    / Admin@2025!
+    operador@proofchain.dev / Operador@2025!
+    auditor@proofchain.dev  / Auditor@2025!
+
+  Seção: Variáveis de ambiente (tabela com nome, tipo, descrição, obrigatório)
+
+
+===============================================================================
+ORDEM DE IMPLEMENTAÇÃO RECOMENDADA (10 DIAS)
+===============================================================================
+
+Dia 1 : FEATURE 02 (Smart Contract) + FEATURE 01 (Fundação — parcial)
+         Prioridade: contrato compilado e deployado na Sepolia.
+         Risco: faucet pode demorar — solicitar ETH logo no início do dia.
+
+Dia 2 : FEATURE 01 (Fundação — completo) + FEATURE 03 (Prisma Schema)
+         Monorepo configurado, banco com migrations e seed funcionando.
+
+Dia 3 : FEATURE 04 (Hash Engine + Verification Service + testes)
+         Módulos core do sistema. TST-001 e TST-002 passando.
+
+Dia 4 : FEATURE 06 (Emissão de Título de Dívida — backend)
+         Integração blockchain ↔ PostgreSQL. Etapa mais complexa do backend.
+
+Dia 5 : FEATURE 05 (Auth JWT) + endpoints restantes de FEATURE 06
+         Auth completo + formulário de emissão no React.
+
+Dia 6 : FEATURE 07 (Verificação pública — PRIORIDADE MÁXIMA DE UX)
+         Tela de verificação com selos visuais e modal. Demo killer.
+
+Dia 7 : FEATURE 09 (Parcelas e Pagamentos — backend + frontend)
+
+Dia 8 : FEATURE 08 (Trilha Forense) + FEATURE 10 (Dashboard)
+
+Dia 9 : FEATURE 11 (Cron Job) + FEATURE 12 (Testes de integração)
+
+Dia 10: Buffer — resolver pendências, polish de UX, README, ensaio da demo.
+         NÃO adicionar features novas no dia 10.
+
+===============================================================================
+O QUE NUNCA CORTAR (independente de prazo)
+===============================================================================
+  - hashEngine.ts + TST-001 (base de tudo)
+  - storeHashOnChain + getHashFromChain (integração blockchain)
+  - GET /api/titulos/:id/verify (tela pública de verificação)
+  - AuditLog automático em toda escrita
+  - Trigger de imutabilidade do hash no PostgreSQL
+
+===============================================================================
+O QUE CORTAR SE ATRASAR
+===============================================================================
+  - Transferência de custódia (cadeia de supersession)
+  - Exportação .xlsx de parcelas
+  - Cron job de varredura automática (substituir por verificação manual)
+  - Gráficos Recharts (substituir por números simples no dashboard)
+  - Documentação Swagger
+
+===============================================================================
+FIM DO PROMPT DE IMPLEMENTAÇÃO — ProofChain v2.0
+===============================================================================

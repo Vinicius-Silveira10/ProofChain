@@ -1,0 +1,20 @@
+# Credenciais — NUNCA commitar
+.env
+
+# Dependências
+node_modules/
+
+# Artefatos de compilação (regeneráveis via: npx hardhat compile)
+artifacts/
+cache/
+typechain-types/
+
+# Artefatos de deploy de rede principal (endereços públicos, mas por precaução)
+deployments/mainnet.json
+
+# TypeScript compilado
+dist/
+
+# Coverage
+coverage/
+coverage.json

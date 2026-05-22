@@ -1,0 +1,148 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------
+// USUÁRIOS
+// ---------------------------------------------------------------------
+
+model User {
+  id                   String        @id @default(uuid())
+  email                String        @unique
+  passwordHash         String
+  name                 String
+  role                 UserRole      @default(OPERATOR)
+  isActive             Boolean       @default(true)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  auditLogs            AuditLog[]
+  installmentPayments  Installment[] @relation("PaymentUser")
+
+  @@map("users")
+}
+
+enum UserRole {
+  OPERATOR
+  AUDITOR
+  ADMIN
+}
+
+// ---------------------------------------------------------------------
+// TÍTULOS DE DÍVIDA (anteriormente: Debêntures)
+// ---------------------------------------------------------------------
+
+model TituloDivida {
+  id                String          @id @default(uuid())
+  cnpj_emissor      String
+  credor            String
+  valor_centavos    BigInt
+  // BigInt para suportar valores altos sem perda de precisão.
+  // Ao serializar para JSON, converter para string.
+  data_vencimento   DateTime
+  hash_integridade  String          @unique
+  tx_hash           String?
+  status            TituloStatus    @default(ACTIVE)
+  integrity_status  IntegrityStatus @default(PENDING)
+  supersedes_id     String?         // FK para TituloDivida (cadeia de custódia)
+  superseded_by     TituloDivida?   @relation("CustodyChain", fields: [supersedes_id], references: [id])
+  supersession      TituloDivida[]  @relation("CustodyChain")
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  auditLogs         AuditLog[]
+  installments      Installment[]
+
+  @@map("titulos_divida")
+}
+
+enum TituloStatus {
+  ACTIVE
+  SUPERSEDED
+  ERROR
+}
+
+enum IntegrityStatus {
+  VERIFIED     // Hash bate com a blockchain — registro íntegro
+  COMPROMISED  // Hash diverge — fraude detectada
+  PENDING      // Ainda não verificado ou blockchain inacessível
+}
+
+// ---------------------------------------------------------------------
+// PARCELAS E PAGAMENTOS
+// ---------------------------------------------------------------------
+
+model Installment {
+  id                      String            @id @default(uuid())
+  tituloDividaId          String
+  tituloDivida            TituloDivida      @relation(fields: [tituloDividaId], references: [id])
+
+  numero_parcela          Int               // 1, 2, 3, 4...
+  valor_centavos          BigInt
+  data_vencimento_parcela DateTime          // DateTime UTC
+
+  motivo                  String
+  // Finalidade da dívida. Ex: "Compra de produtos para estoque"
+  // Mínimo 10 caracteres, máximo 500. NUNCA exposto publicamente.
+
+  autorizado_por          String
+  // Nome/cargo de quem aprovou. Ex: "João Silva — Diretor Financeiro"
+  // Campo de texto livre. NUNCA exposto publicamente.
+
+  status_parcela          InstallmentStatus @default(PENDENTE)
+
+  // Campos preenchidos AUTOMATICAMENTE pelo servidor no momento do pagamento:
+  data_hora_pagamento     DateTime?         // null até ser marcado como PAGO
+  usuario_pagamento_id    String?           // null até ser marcado como PAGO
+  usuario_pagamento       User?             @relation("PaymentUser", fields: [usuario_pagamento_id], references: [id])
+
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+
+  @@unique([tituloDividaId, numero_parcela])
+  // Impede número de parcela duplicado dentro do mesmo Título de Dívida.
+  @@map("installments")
+}
+
+enum InstallmentStatus {
+  PENDENTE
+  PAGO
+  VENCIDO
+  CANCELADO
+}
+
+// ---------------------------------------------------------------------
+// LOG DE AUDITORIA
+// ---------------------------------------------------------------------
+
+model AuditLog {
+  id              String      @id @default(uuid())
+  tituloDividaId  String
+  tituloDivida    TituloDivida @relation(fields: [tituloDividaId], references: [id])
+  userId          String
+  user            User        @relation(fields: [userId], references: [id])
+  action          AuditAction
+  clientIp        String
+  diff_snapshot   Json?       // { before: {...}, after: {...} }
+  timestamp       DateTime    @default(now())
+
+  @@map("audit_logs")
+}
+
+enum AuditAction {
+  INSERT
+  UPDATE
+  STATUS_CHANGE
+  INTEGRITY_BREACH_DETECTED
+  CUSTODY_TRANSFER
+  VERIFICATION_REQUESTED
+  PAYMENT_REGISTERED
+  INSTALLMENT_OVERDUE
+  INSTALLMENT_CANCELLED
+  EXPORT_GENERATED
+}

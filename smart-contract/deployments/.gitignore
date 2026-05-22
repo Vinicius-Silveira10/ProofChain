@@ -1,0 +1,4 @@
+# Artefatos de deploy com endereços REAIS de rede pública — NÃO commitar se contiver
+# informações sensíveis. Manter sepolia.json no repositório é OK (é informação pública).
+# Nunca commitar: mainnet.json (se criado futuramente)
+mainnet.json

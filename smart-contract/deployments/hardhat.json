@@ -1,0 +1,8 @@
+{
+  "contractAddress": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+  "txHash": "0x02fdbe152ffb5991323b00f02192406940c4ba70f090aa9c7e591e9d74df3bb4",
+  "deployedAt": "2026-05-21T23:40:00.065Z",
+  "network": "hardhat",
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "etherscan": "https://sepolia.etherscan.io/address/0x5FbDB2315678afecb367f032d93F642f64180aa3"
+}
