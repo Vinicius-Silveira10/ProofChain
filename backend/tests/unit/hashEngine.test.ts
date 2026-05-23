@@ -120,16 +120,37 @@ describe("HashEngine (TST-001)", () => {
   });
 
   describe("regressão: snapshot do hash", () => {
-    // Este teste protege contra alteração acidental da fórmula.
-    // Se ele falhar, TODOS os registros históricos foram invalidados.
-    it("hash do payload canônico permanece estável", () => {
-      const h = generateHash(base);
-      // Snapshot calculado manualmente — NÃO ALTERAR sem migration.
-      // SHA-256 de: "550e8400-e29b-41d4-a716-44665544000012345678000195" +
-      //             "5000000" + "2025-12-31T00:00:00.000Z"
-      expect(h).toBe("a3a6dca2c4cb7e87e7c4858d4c3b7c5b1c1c6e0e9d4f7d2c8e9a6b5d4c3b2a1f0"
-        .substring(0, 0) + h); // self-equal placeholder
-      // Em PR real: rodar uma vez, capturar o output, e fixar aqui.
+    /**
+     * ⚠️  ÂNCORA DE REGRESSÃO — NÃO ALTERAR ESTE VALOR.
+     * Se este teste falhar, o algoritmo foi modificado e TODOS os hashes
+     * históricos na blockchain estão invalidados.
+     *
+     * Payload canônico:
+     *   id           : "550e8400-e29b-41d4-a716-446655440000"
+     *   cnpj_emissor : "12345678000195"
+     *   valor_str    : "5000000"
+     *   data_iso     : "2025-12-31T00:00:00.000Z"
+     *   raw          : "550e8400-e29b-41d4-a716-44665544000012345678000195" +
+     *                  "50000002025-12-31T00:00:00.000Z"
+     */
+    it("hash do payload canônico permanece estável (âncora SHA-256)", () => {
+      const CANONICAL_HASH =
+        "e00a891d99e393f68844f7b548b36f4a7d238d44ae3a25613eb598895914d5e7";
+      expect(generateHash(base)).toBe(CANONICAL_HASH);
+    });
+  });
+
+  describe("cobertura de branches defensivos", () => {
+    it("rejeita input null (guarda de tipo)", () => {
+      // Cobre linha 93 — branch: input não é objeto
+      expect(() => generateHash(null as any)).toThrow(/input must be an object/);
+    });
+
+    it("rejeita valor_centavos com tipo inválido (ex: string)", () => {
+      // Cobre linha 105 — branch: tipo diferente de bigint/number
+      expect(() =>
+        generateHash({ ...base, valor_centavos: "5000000" as any })
+      ).toThrow(/bigint or number/);
     });
   });
 });

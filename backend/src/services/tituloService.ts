@@ -8,41 +8,13 @@ import { BlockchainService, BlockchainError } from "./blockchainService";
  * TÍTULO DE DÍVIDA — SERVICE
  * ============================================================================
  *
- * Implementa a sequência atômica RN-REC-003 — o ponto mais crítico do sistema.
+ * Implementa a sequência atômica RN-REC-003.
  *
- * SEQUÊNCIA CORRETA (e por que cada passo está nessa ordem):
- *
- *   1. Validar input
- *        → fail-fast antes de gastar gás na rede.
- *
- *   2. Gerar UUID + calcular hash
- *        → operações puras, sem efeitos colaterais.
- *
- *   3. Pré-inserir registro com status='PENDING_ANCHOR' (outbox pattern)
- *        → permite recovery se o backend crashar entre passo 4 e 5.
- *
- *   4. Ancorar na blockchain (com timeout de 60s)
- *        → se falhar: atualizar registro para status='ERROR' (NUNCA deletar —
- *          RN-AJU-001).
- *
- *   5. Atualizar registro para status='ACTIVE' com tx_hash
- *        → única transição que torna o registro publicamente válido.
- *
- *   6. Registrar AuditLog
- *        → na MESMA transação Prisma do passo 5.
- *
- * POR QUE NÃO "BLOCKCHAIN PRIMEIRO, DEPOIS SQL"?
- *   Porque se a tx confirmar e o servidor crashar antes de salvar no SQL,
- *   ficamos com um hash órfão on-chain (gás queimado + estado inconsistente).
- *   O outbox-pattern resolve isso: a linha no SQL existe ANTES de gastar gás,
- *   então no pior caso temos uma linha em status='ERROR' (visível para retry),
- *   nunca um hash órfão.
- *
- * POR QUE NÃO "SQL PRIMEIRO, DEPOIS BLOCKCHAIN"?
- *   Porque a spec exige que registros visíveis publicamente tenham tx_hash
- *   válido (RN-ARM-001). Por isso o status='PENDING_ANCHOR' é INVISÍVEL na
- *   listagem pública (filtro: status='ACTIVE').
- * ============================================================================
+ * Fluxo Acordado:
+ * 1. Validar Input.
+ * 2. Gerar ID + Calcular Hash.
+ * 3. Ancorar na Blockchain (Sepolia) ANTES do SQL.
+ * 4. Inserir no PostgreSQL + AuditLog em transação única.
  */
 
 export interface CreateTituloInput {
@@ -77,110 +49,70 @@ export class TituloService {
       data_vencimento: input.data_vencimento,
     });
 
-    // ---------------- PASSO 3: outbox row ----------------
-    // Persistimos uma "intenção" antes de gastar gás. Se algo der errado
-    // adiante, esta linha vira evidência de falha (status='ERROR'), não
-    // um hash órfão na blockchain.
-    await this.prisma.tituloDivida.create({
-      data: {
-        id,
-        cnpj_emissor: input.cnpj_emissor,
-        credor: input.credor,
-        valor_centavos: input.valor_centavos,
-        data_vencimento: input.data_vencimento,
-        hash_integridade: hash,
-        tx_hash: null,
-        status: TituloStatus.ERROR, // até confirmar on-chain, é "ERROR" — invisível ao público
-        integrity_status: IntegrityStatus.PENDING,
-      },
-    });
-
-    // ---------------- PASSO 4: ancoragem ----------------
-    let anchor;
+    // ---------------- PASSO 3: ancoragem (blockchain-first) ----------------
+    let txHash: string;
+    let etherscanUrl: string;
+    
     try {
-      anchor = await this.blockchain.anchorHash(id, hash);
-    } catch (err) {
-      // Mantemos a linha em status='ERROR' para auditoria / retry futuro.
-      // Não relançamos sem contexto — embrulhamos com mensagem útil.
-      const code = err instanceof BlockchainError ? err.code : "UNKNOWN";
-      throw new TituloCreationError(
-        `Blockchain anchoring failed (${code}): ${(err as Error).message}`,
-        { id, hash }
-      );
+      // Se a blockchain falhar ou der timeout, nada vai para o banco.
+      const anchor = await this.blockchain.anchorHash(id, hash);
+      txHash = anchor.txHash;
+      etherscanUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
+    } catch (err: unknown) {
+      if (err instanceof BlockchainError && err.code === 'TIMEOUT') {
+        throw new Error('BLOCKCHAIN_TIMEOUT');
+      }
+      throw new Error('BLOCKCHAIN_ERROR');
     }
 
-    // ---------------- PASSOS 5 + 6: ativação + audit (atômicos) ----------------
-    const titulo = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.tituloDivida.update({
-        where: { id },
-        data: {
-          tx_hash: anchor.txHash,
-          status: TituloStatus.ACTIVE,
-          integrity_status: IntegrityStatus.VERIFIED,
-        },
+    // ---------------- PASSO 4: Persistência SQL (apenas após sucesso na blockchain) ----------------
+    try {
+      const titulo = await this.prisma.$transaction(async (tx) => {
+        const newTitulo = await tx.tituloDivida.create({
+          data: {
+            id,
+            cnpj_emissor: input.cnpj_emissor,
+            credor: input.credor,
+            valor_centavos: input.valor_centavos,
+            data_vencimento: input.data_vencimento,
+            hash_integridade: hash,
+            tx_hash: txHash,
+            status: TituloStatus.ACTIVE,
+            integrity_status: IntegrityStatus.VERIFIED,
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            tituloDividaId: id,
+            userId: ctx.userId,
+            action: "INSERT",
+            clientIp: ctx.clientIp,
+            diff_snapshot: {
+              before: null,
+              after: serializeForAudit(newTitulo) as any,
+            } as Prisma.InputJsonValue,
+          },
+        });
+
+        return newTitulo;
       });
 
-      await tx.auditLog.create({
-        data: {
-          tituloDividaId: id,
-          userId: ctx.userId,
-          action: "INSERT",
-          clientIp: ctx.clientIp,
-          diff_snapshot: {
-            before: null,
-            after: serializeForAudit(updated),
-          } as Prisma.InputJsonValue,
-        },
+      return {
+        ...titulo,
+        etherscan_url: etherscanUrl,
+        valor_centavos: titulo.valor_centavos.toString(),
+      };
+    } catch (error) {
+      // Se a transação falhar: o hash já está na blockchain mas sem registro SQL.
+      // Logar o erro com id e tx_hash para recuperação manual.
+      console.error(`🚨 ALERTA CRÍTICO: Falha ao inserir Titulo no SQL após ancoragem na Blockchain!`, {
+        id,
+        tx_hash: txHash,
+        error
       });
-
-      return updated;
-    });
-
-    return {
-      ...titulo,
-      valor_centavos: titulo.valor_centavos.toString(), // BigInt-safe JSON
-    };
-  }
-
-  /**
-   * Reanchoragem de registros em status='ERROR' (recovery após falha).
-   * Idempotente: se o id já estiver ancorado on-chain, completa o registro.
-   */
-  async retryAnchor(id: string, ctx: AuditContext) {
-    this.assertContext(ctx);
-
-    const titulo = await this.prisma.tituloDivida.findUniqueOrThrow({ where: { id } });
-    if (titulo.status === TituloStatus.ACTIVE) {
-      throw new TituloCreationError(`Titulo ${id} is already ACTIVE`, { id });
+      throw new Error('FATAL_SQL_ERROR');
     }
-
-    const anchor = await this.blockchain.anchorHash(id, titulo.hash_integridade);
-
-    return await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.tituloDivida.update({
-        where: { id },
-        data: {
-          tx_hash: anchor.txHash,
-          status: TituloStatus.ACTIVE,
-          integrity_status: IntegrityStatus.VERIFIED,
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          tituloDividaId: id,
-          userId: ctx.userId,
-          action: "STATUS_CHANGE",
-          clientIp: ctx.clientIp,
-          diff_snapshot: {
-            before: { status: titulo.status, tx_hash: titulo.tx_hash },
-            after: { status: updated.status, tx_hash: updated.tx_hash },
-          } as Prisma.InputJsonValue,
-        },
-      });
-
-      return updated;
-    });
   }
 
   // --------------------------------------------------------------------
@@ -223,7 +155,6 @@ export class TituloService {
 
 export function isValidCnpj(cnpj: string): boolean {
   if (!/^\d{14}$/.test(cnpj)) return false;
-  // Rejeita sequências repetidas (00000000000000, 11111111111111, ...)
   if (/^(\d)\1{13}$/.test(cnpj)) return false;
 
   const digits = cnpj.split("").map(Number);
@@ -253,14 +184,6 @@ export class ValidationError extends Error {
   }
 }
 
-export class TituloCreationError extends Error {
-  constructor(message: string, public readonly meta: Record<string, unknown>) {
-    super(message);
-    this.name = "TituloCreationError";
-  }
-}
-
-// BigInt-safe serializer para JSON do AuditLog
 function serializeForAudit(t: { valor_centavos: bigint } & Record<string, unknown>) {
   return { ...t, valor_centavos: t.valor_centavos.toString() };
 }

@@ -5,6 +5,8 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// Prisma 7.x: a URL de conexão é configurada exclusivamente em prisma.config.ts
+// que lê DATABASE_URL via dotenv. NÃO adicionar url aqui (erro P1012).
 datasource db {
   provider = "postgresql"
 }
@@ -58,6 +60,10 @@ model TituloDivida {
   auditLogs         AuditLog[]
   installments      Installment[]
 
+  // Índices para queries frequentes: filtros por status, emissor e varredura do cron
+  @@index([cnpj_emissor])
+  @@index([status])
+  @@index([integrity_status])
   @@map("titulos_divida")
 }
 
@@ -106,6 +112,7 @@ model Installment {
 
   @@unique([tituloDividaId, numero_parcela])
   // Impede número de parcela duplicado dentro do mesmo Título de Dívida.
+  @@index([tituloDividaId]) // Listagem de parcelas por título — query frequente
   @@map("installments")
 }
 
@@ -131,6 +138,8 @@ model AuditLog {
   diff_snapshot   Json?       // { before: {...}, after: {...} }
   timestamp       DateTime    @default(now())
 
+  // Índice composto para listagem de logs por título ordenado por data
+  @@index([tituloDividaId, timestamp])
   @@map("audit_logs")
 }
 
