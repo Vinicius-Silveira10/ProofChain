@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { FileText, DollarSign, Calendar, Building2, User, Loader2, CheckCircle, ExternalLink, RotateCcw } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useToast } from "@/components/ui/use-toast";
+import { tituloService } from "@/services/tituloService";
 
 interface SuccessData {
   id: string;
@@ -15,6 +17,7 @@ interface SuccessData {
 }
 
 export function EmissaoForm() {
+  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [success, setSuccess] = useState<SuccessData | null>(null);
   const [tipoPagamento, setTipoPagamento] = useState("a_vista");
@@ -25,6 +28,14 @@ export function EmissaoForm() {
     valor: "",
     vencimento: "",
   });
+
+  const isMounted = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
 
   const formatCNPJ = (value: string) => {
     const numbers = value.replace(/\D/g, "");
@@ -67,16 +78,91 @@ export function EmissaoForm() {
     e.preventDefault();
     setIsLoading(true);
 
-    // Simula chamada à API (em produção, seria axios.post('/api/titulos', formData))
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    // Converte de "1.234,56" para 1234.56
+    const valorFloat = parseFloat(formData.valor.replace(/\./g, "").replace(",", "."));
 
-    // Dados simulados de sucesso
-    setSuccess({
-      id: "550e8400-e29b-41d4-a716-446655440000",
-      hash: "a3f2b8c9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1",
-      txHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-    });
-    setIsLoading(false);
+    // Task 4.1: Gerar UUID idempotente no cliente
+    const idempotencyKey = crypto.randomUUID();
+
+    try {
+      const payload: any = {
+        cnpjEmissor: formData.cnpj.replace(/\D/g, ""), // Limpa máscara
+        credor: formData.credor,
+        valorTotal: valorFloat,
+        tipoPagamento: tipoPagamento,
+        vencimento: formData.vencimento, 
+        qtdParcelas: tipoPagamento === "parcelado" ? parseInt(qtdParcelas, 10) : 1
+      };
+
+      const response = await tituloService.criarTitulo(payload, idempotencyKey);
+      
+      toast({
+        title: "Submissão Aceita",
+        description: "O título foi enviado e está aguardando processamento na blockchain (Polling iniciado).",
+        variant: "default",
+      });
+
+      // Task 4.2: Loop de Polling (Consultando a API a cada 3s com limite de 20 tentativas = 60s)
+      let tentativas = 0;
+      const maxTentativas = 20;
+      let finalizou = false;
+
+      while (tentativas < maxTentativas && !finalizou && isMounted.current) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        if (!isMounted.current) break; // Se desmontou durante o sleep, sai imediatamente
+        
+        tentativas++;
+
+        try {
+          const tituloAtualizado = await tituloService.getTituloById(response.id);
+          
+          if (tituloAtualizado.status === "VERIFIED") {
+            finalizou = true;
+            // Task 4.3: Feedback Visual On-Chain
+            setSuccess({
+              id: tituloAtualizado.id,
+              hash: tituloAtualizado.dbHash || "N/A",
+              txHash: tituloAtualizado.txHash || "0x...", 
+              operador: "Operador Atual", // Em um app real, viria do AuthContext
+              gasCost: "-", 
+              timestamp: tituloAtualizado.blockTimestamp || new Date().toISOString()
+            });
+            break;
+          } else if (tituloAtualizado.status === "FAILED_ON_CHAIN" || tituloAtualizado.status === "COMPROMISED") {
+            finalizou = true;
+            toast({
+              title: "Falha na Ancoragem",
+              description: "Ocorreu um erro durante o registro on-chain.",
+              variant: "destructive",
+            });
+            break;
+          }
+          // Se for "PENDING", o loop continua...
+        } catch (pollError) {
+          console.error("Erro no polling:", pollError);
+        }
+      }
+
+      if (!finalizou && isMounted.current) {
+        toast({
+          title: "Timeout",
+          description: "A ancoragem está demorando muito. Você pode consultar o status depois no Portfólio.",
+          variant: "destructive",
+        });
+      }
+
+    } catch (error: any) {
+      const message = error.response?.data?.message || "Falha ao registrar título ou servidor indisponível.";
+      toast({
+        title: "Erro na Submissão",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      if (isMounted.current) {
+        setIsLoading(false);
+      }
+    }
   };
 
   const handleReset = () => {

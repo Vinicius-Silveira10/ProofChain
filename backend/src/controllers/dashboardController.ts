@@ -53,7 +53,7 @@ export const dashboardController = {
           DATE("createdAt") as dia, 
           COUNT(*) as quantidade, 
           SUM(valor_centavos) as total_centavos
-        FROM "TituloDivida"
+        FROM "titulos_divida"
         WHERE status = 'ACTIVE' AND "createdAt" >= ${thirtyDaysAgo}
         GROUP BY DATE("createdAt")
         ORDER BY DATE("createdAt") ASC;
@@ -78,6 +78,7 @@ export const dashboardController = {
 
       const payload = {
         total_ativos_reais: totalBRL,
+        total_centavos: Number(totalCentavos),
         total_titulos_ativos: ativos_totais,
         total_titulos_comprometidos: comprometidos,
         percentual_integridade,

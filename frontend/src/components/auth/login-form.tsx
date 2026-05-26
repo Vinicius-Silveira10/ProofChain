@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Shield, Eye, EyeOff, AlertCircle, Loader2, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { authService } from "@/services/authService";
 
 export function LoginForm() {
   const navigate = useNavigate();
@@ -10,22 +11,24 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [showError, setShowError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    setShowError(false);
+    setErrorMessage(null);
 
-    // Simular chamada de API
-    setTimeout(() => {
+    try {
+      await authService.login(email, password);
+      navigate("/dashboard");
+    } catch (error: any) {
+      console.error("Falha no login:", error);
+      // Sanitização de Mensagens de Erro
+      const message = error.response?.data?.message || "Erro de conexão ao tentar autenticar. Tente novamente.";
+      setErrorMessage(message);
+    } finally {
       setIsLoading(false);
-      if (email === "admin@proofchain.com" && password === "admin123") {
-        navigate("/dashboard");
-      } else {
-        setShowError(true);
-      }
-    }, 1500);
+    }
   };
 
   return (
@@ -83,11 +86,11 @@ export function LoginForm() {
             </div>
 
             {/* Alerta de Erro */}
-            {showError && (
+            {errorMessage && (
               <div className="mb-6 flex items-center gap-3 rounded-md bg-red-50 border border-red-200 px-4 py-3">
                 <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
                 <p className="text-sm text-red-600">
-                  Credenciais inválidas ou acesso revogado.
+                  {errorMessage}
                 </p>
               </div>
             )}

@@ -1,10 +1,12 @@
 import { useState } from "react";
-import axios from "axios";
+import api from "@/services/api";
 import { Header } from "@/components/verification/header";
 import { SearchSection } from "@/components/verification/search-section";
 import { IntegrityCard, type TitleData, type VerificationStatus } from "@/components/verification/integrity-card";
 import { ForensicModal } from "@/components/verification/forensic-modal";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Download, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { exportHtmlToPdf } from "@/utils/pdf";
 
 interface ApiResponse {
   uuid: string;
@@ -22,6 +24,7 @@ interface ApiResponse {
 
 export default function VerificadorPublico() {
   const [isLoading, setIsLoading] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [searchResult, setSearchResult] = useState<TitleData | null>(null);
   const [forensicData, setForensicData] = useState<{
     dbHash: string;
@@ -51,61 +54,51 @@ export default function VerificadorPublico() {
     setError(null);
 
     try {
-      // MOCK PARA TESTES DE FRONTEND
-      if (uuid === "f47ac10b-58cc-4372-a567-0e02b2c3d479") {
-        setTimeout(() => {
-          setSearchResult({
-            uuid: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-            creditor: "Empresa de Teste Mock Ltda",
-            value: formatCurrency(1500000),
-            dueDate: formatDate("2026-12-31"),
-            issueDate: formatDate("2026-05-23"),
-            status: "VERIFIED",
-          });
-          setForensicData({
-            dbHash: "0xabc123def456hashbancodedados",
-            blockchainHash: "0xabc123def456hashblockchain",
-            blockTimestamp: new Date().toISOString(),
-            txHash: "0xtxhash1234567890abcdef",
-          });
-          setIsLoading(false);
-        }, 1000);
+      // Task 5.1: Chama a rota pública. Usando api centralizada (ou axios direto se preferir, mas api já tem baseURL)
+      const response = await api.get(`/public/titulos/${uuid}/verify`);
+      const payload = response.data;
+
+      // O payload esperado tem a chave "titulo" e "isValid"
+      if (!payload.isValid || !payload.titulo) {
+        setError("Título inválido ou não encontrado na rede.");
         return;
       }
 
-      const response = await axios.get<ApiResponse>(`/api/titulos/${uuid}/verify`);
-      const data = response.data;
+      const data = payload.titulo;
 
       setSearchResult({
         uuid: data.uuid,
-        creditor: data.creditor,
-        value: formatCurrency(data.total_value),
-        dueDate: formatDate(data.due_date),
-        issueDate: formatDate(data.issue_date),
+        creditor: data.credor,
+        value: formatCurrency(data.valorTotal),
+        // Na interface do backend, data.dataEmissao é usada
+        dueDate: formatDate(data.dataEmissao), 
+        issueDate: formatDate(data.dataEmissao),
         status: data.status,
       });
 
       setForensicData({
-        dbHash: data.db_hash,
-        blockchainHash: data.blockchain_hash,
-        blockTimestamp: data.block_timestamp,
-        txHash: data.tx_hash,
+        dbHash: data.dbHash || "N/A",
+        blockchainHash: data.blockchainHash || "N/A",
+        blockTimestamp: data.blockTimestamp || new Date().toISOString(),
+        txHash: data.txHash || "0x...",
       });
-    } catch (err) {
-      if (axios.isAxiosError(err)) {
-        if (err.response?.status === 404) {
-          setError("Título não encontrado. Verifique o UUID e tente novamente.");
-        } else if (err.response?.status === 400) {
-          setError("UUID inválido. O formato deve ser um UUID válido.");
-        } else {
-          setError("Erro ao consultar o título. Tente novamente mais tarde.");
-        }
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        setError("Título não encontrado. Verifique o UUID e tente novamente.");
+      } else if (err.response?.status === 400) {
+        setError("UUID inválido. O formato deve ser um UUID válido.");
       } else {
-        setError("Erro de conexão. Verifique sua internet e tente novamente.");
+        setError("Erro de conexão. Verifique sua internet ou tente mais tarde.");
       }
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleExportPDF = async () => {
+    setIsExporting(true);
+    await exportHtmlToPdf("proofchain-receipt", `Recibo_ProofChain_${searchResult?.uuid?.split('-')[0]}`);
+    setIsExporting(false);
   };
 
   return (
@@ -131,11 +124,25 @@ export default function VerificadorPublico() {
         )}
 
         {searchResult && (
-          <div className="px-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <IntegrityCard 
-              data={searchResult} 
-              onOpenForensic={() => setIsForensicOpen(true)} 
-            />
+          <div className="px-4 animate-in fade-in slide-in-from-bottom-4 duration-500 flex flex-col items-center">
+            <div className="w-full max-w-2xl flex justify-end mb-3">
+              <Button 
+                variant="outline" 
+                onClick={handleExportPDF} 
+                disabled={isExporting}
+                className="gap-2 bg-white"
+              >
+                {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {isExporting ? "Gerando PDF..." : "Exportar Recibo (PDF)"}
+              </Button>
+            </div>
+            
+            <div id="proofchain-receipt" className="w-full max-w-2xl bg-background p-2 rounded-xl">
+              <IntegrityCard 
+                data={searchResult} 
+                onOpenForensic={() => setIsForensicOpen(true)} 
+              />
+            </div>
           </div>
         )}
       </main>

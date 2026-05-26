@@ -1,13 +1,16 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import type { IntegrityChartData } from "@/services/tituloService";
 
-const data = [
-  { name: "Verificados", value: 138, color: "#10b981" },
-  { name: "Comprometidos", value: 0, color: "#ef4444" },
-  { name: "Pendentes", value: 4, color: "#94a3b8" },
-];
+interface IntegrityChartProps {
+  data?: IntegrityChartData[];
+  isLoading?: boolean;
+}
 
-export function IntegrityChart() {
+export function IntegrityChart({ data, isLoading }: IntegrityChartProps) {
+  const chartData = data || [];
+
   return (
     <Card className="rounded-md shadow-sm border-border">
       <CardHeader className="pb-2">
@@ -17,10 +20,13 @@ export function IntegrityChart() {
       </CardHeader>
       <CardContent>
         <div className="h-[280px] w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={data}
+          {isLoading ? (
+            <Skeleton className="h-full w-full" />
+          ) : (
+            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+              <PieChart>
+                <Pie
+                  data={chartData}
                 cx="50%"
                 cy="45%"
                 innerRadius={60}
@@ -29,7 +35,7 @@ export function IntegrityChart() {
                 dataKey="value"
                 cursor="pointer"
               >
-                {data.map((entry, index) => (
+                {chartData.map((entry, index) => (
                   <Cell 
                     key={`cell-${index}`} 
                     fill={entry.color} 
@@ -52,8 +58,9 @@ export function IntegrityChart() {
                   <span className="text-sm text-muted-foreground">{value}</span>
                 )}
               />
-            </PieChart>
-          </ResponsiveContainer>
+              </PieChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </CardContent>
     </Card>

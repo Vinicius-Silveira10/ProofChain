@@ -20,7 +20,7 @@ app.use(express.json());
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100 // Limite genérico
+  max: 1000 // Limite genérico aumentado para não bloquear testes de desenvolvimento
 });
 app.use(limiter);
 
@@ -34,6 +34,7 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/titulos', tituloRoutes);
+app.use('/api/public/titulos', tituloRoutes); // Permite que a rota pública do frontend funcione sem cair no fallback
 app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api', installmentRoutes); // Mapeado na raiz pois contém '/titulos/:id/installments' e '/installments/:id'
 app.use('/api/dashboard', dashboardRoutes);

@@ -37,19 +37,28 @@ export function PortfolioHeader() {
   );
 }
 
-export function PortfolioTitleSection({ onExport }: { onExport?: () => void }) {
+export function PortfolioTitleSection({ onExport, disabledExport, statusFilter }: { onExport?: () => void, disabledExport?: boolean, statusFilter?: string }) {
+  const titles: Record<string, string> = {
+    all: "Títulos sob Custódia",
+    VERIFIED: "Títulos Ativos",
+    PENDING: "Títulos Pendentes",
+    COMPROMISED: "Alertas de Fraude"
+  };
+
+  const title = statusFilter && titles[statusFilter] ? titles[statusFilter] : titles.all;
+
   return (
     <div className="flex items-start justify-between">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">
-          Títulos sob Custódia
+          {title}
         </h1>
         <p className="mt-1 text-slate-500">
           Gerencie e audite todos os passivos registrados no sistema.
         </p>
       </div>
       <div className="flex gap-2">
-        <Button variant="outline" className="gap-2" onClick={onExport}>
+        <Button variant="outline" className="gap-2" onClick={onExport} disabled={disabledExport}>
           <Download className="h-4 w-4" />
           Exportar para Excel
         </Button>

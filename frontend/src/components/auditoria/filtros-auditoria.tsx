@@ -20,6 +20,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
 
 interface FiltrosAuditoriaProps {
+  initialAcao?: string;
   onFilterChange: (filters: {
     uuid: string;
     acao: string;
@@ -28,9 +29,9 @@ interface FiltrosAuditoriaProps {
   }) => void;
 }
 
-export function FiltrosAuditoria({ onFilterChange }: FiltrosAuditoriaProps) {
+export function FiltrosAuditoria({ onFilterChange, initialAcao }: FiltrosAuditoriaProps) {
   const [uuid, setUuid] = useState("");
-  const [acao, setAcao] = useState("todas");
+  const [acao, setAcao] = useState(initialAcao || "todas");
   const [dataInicio, setDataInicio] = useState<Date | undefined>(undefined);
   const [dataFim, setDataFim] = useState<Date | undefined>(undefined);
 

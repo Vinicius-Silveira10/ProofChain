@@ -131,7 +131,7 @@ export function IntegrityCard({ data, onOpenForensic }: IntegrityCardProps) {
 
         {/* Forensic Button - only show for VERIFIED or COMPROMISED */}
         {(data.status === "VERIFIED" || data.status === "COMPROMISED") && (
-          <div className="border-t border-border pt-4">
+          <div className="border-t border-border pt-4" data-html2canvas-ignore="true">
             <Button 
               variant="outline" 
               className="w-full sm:w-auto"

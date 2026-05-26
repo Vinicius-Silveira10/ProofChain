@@ -81,20 +81,35 @@ export const tituloController = {
       const limit = Math.max(1, parseInt(req.query.limit as string) || 20);
       const skip = (page - 1) * limit;
 
+      const status = req.query.status as string;
+      const search = req.query.search as string;
+
+      const whereClause: any = {};
+      if (status) {
+        whereClause.integrity_status = status;
+      }
+      if (search) {
+        whereClause.OR = [
+          { credor: { contains: search, mode: 'insensitive' } },
+          { cnpj_emissor: { contains: search } }
+        ];
+      }
+
       const titulos = await prisma.tituloDivida.findMany({
+        where: whereClause,
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
       });
 
-      const total = await prisma.tituloDivida.count();
+      const totalItems = await prisma.tituloDivida.count({ where: whereClause });
 
       res.status(200).json({
         data: titulos.map(t => ({
           ...t,
           valor_centavos: t.valor_centavos.toString() // Safe JSON serialization for BigInt
         })),
-        meta: { page, limit, total, totalPages: Math.ceil(total / limit) }
+        meta: { currentPage: page, limit, totalItems, totalPages: Math.ceil(totalItems / limit) }
       });
     } catch (error) {
       console.error('Error fetching titulos:', error);

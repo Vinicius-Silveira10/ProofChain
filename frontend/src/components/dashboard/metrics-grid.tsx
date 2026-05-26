@@ -2,15 +2,19 @@ import { Landmark, FileText, ShieldCheck, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Link } from "react-router-dom";
 
+import { Skeleton } from "@/components/ui/skeleton";
+import type { DashboardMetrics } from "@/services/tituloService";
+
 interface MetricCardProps {
   title: string;
   value: string;
   icon: React.ReactNode;
   variant?: "default" | "success" | "alert";
   href?: string;
+  isLoading?: boolean;
 }
 
-function MetricCard({ title, value, icon, variant = "default", href }: MetricCardProps) {
+function MetricCard({ title, value, icon, variant = "default", href, isLoading }: MetricCardProps) {
   const variantStyles = {
     default: "bg-card",
     success: "bg-card",
@@ -28,9 +32,13 @@ function MetricCard({ title, value, icon, variant = "default", href }: MetricCar
       <CardContent className="flex items-center justify-between py-5">
         <div className="space-y-1">
           <p className="text-sm font-medium text-muted-foreground">{title}</p>
-          <p className={`text-2xl font-bold tracking-tight ${valueStyles[variant]}`}>
-            {value}
-          </p>
+          {isLoading ? (
+            <Skeleton className="h-8 w-24" />
+          ) : (
+            <p className={`text-2xl font-bold tracking-tight ${valueStyles[variant]}`}>
+              {value}
+            </p>
+          )}
         </div>
         <div className="flex size-12 items-center justify-center rounded-md bg-muted">
           {icon}
@@ -46,34 +54,47 @@ function MetricCard({ title, value, icon, variant = "default", href }: MetricCar
   return cardContent;
 }
 
-export function MetricsGrid() {
+interface MetricsGridProps {
+  data?: DashboardMetrics;
+  isLoading?: boolean;
+}
+
+export function MetricsGrid({ data, isLoading }: MetricsGridProps) {
+  const formatCurrency = (value: number) => {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+  };
+
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <MetricCard
         title="Total Sob Custódia"
-        value="R$ 1.240.000,00"
+        value={data ? formatCurrency(data.totalCustodia) : "R$ 0,00"}
         icon={<Landmark className="size-6 text-muted-foreground" />}
         href="/portfolio"
+        isLoading={isLoading}
       />
       <MetricCard
         title="Títulos Ativos"
-        value="142"
+        value={data ? String(data.titulosAtivos) : "0"}
         icon={<FileText className="size-6 text-muted-foreground" />}
         href="/portfolio?status=VERIFIED"
+        isLoading={isLoading}
       />
       <MetricCard
         title="Integridade da Carteira"
-        value="100%"
+        value={data ? `${data.integridadePercentual}%` : "0%"}
         variant="success"
         icon={<ShieldCheck className="size-6 text-success" />}
         href="/auditoria"
+        isLoading={isLoading}
       />
       <MetricCard
         title="Alertas de Fraude"
-        value="2"
-        variant="alert"
-        icon={<AlertTriangle className="size-6 text-alert" />}
-        href="/auditoria"
+        value={data ? String(data.alertasFraude) : "0"}
+        variant={data && data.alertasFraude > 0 ? "alert" : "default"}
+        icon={<AlertTriangle className={data && data.alertasFraude > 0 ? "size-6 text-alert" : "size-6 text-muted-foreground"} />}
+        href="/auditoria?acao=INTEGRITY_BREACH_DETECTED"
+        isLoading={isLoading}
       />
     </div>
   );

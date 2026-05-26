@@ -1,113 +1,102 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { Shield, Download } from "lucide-react";
-import * as XLSX from "xlsx";
+import { exportToExcel } from "@/utils/export";
 import { Button } from "@/components/ui/button";
 import { FiltrosAuditoria } from "@/components/auditoria/filtros-auditoria";
 import { TabelaLogs, type LogEntry } from "@/components/auditoria/tabela-logs";
-
-// Dados mock para demonstração
-const mockLogs: LogEntry[] = [
-  {
-    id: "1",
-    dataHora: "23/05/2026 14:32:15",
-    usuario: "admin@proofchain.com",
-    acao: "TITLE_CREATED",
-    entidadeId: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-    enderecoIp: "192.168.1.105",
-  },
-  {
-    id: "2",
-    dataHora: "23/05/2026 14:28:40",
-    usuario: "financeiro@empresa.com.br",
-    acao: "INSTALLMENT_PAID",
-    entidadeId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    enderecoIp: "10.0.0.45",
-  },
-  {
-    id: "3",
-    dataHora: "23/05/2026 13:45:22",
-    usuario: "system@proofchain.internal",
-    acao: "INTEGRITY_BREACH_DETECTED",
-    entidadeId: "9f8e7d6c-5b4a-3210-fedc-ba9876543210",
-    enderecoIp: "127.0.0.1",
-  },
-  {
-    id: "4",
-    dataHora: "23/05/2026 12:15:08",
-    usuario: "auditor@empresa.com.br",
-    acao: "USER_LOGIN",
-    entidadeId: "-",
-    enderecoIp: "187.45.123.78",
-  },
-  {
-    id: "5",
-    dataHora: "23/05/2026 11:50:33",
-    usuario: "admin@proofchain.com",
-    acao: "BLOCKCHAIN_ANCHORED",
-    entidadeId: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-    enderecoIp: "192.168.1.105",
-  },
-  {
-    id: "6",
-    dataHora: "23/05/2026 10:22:17",
-    usuario: "operador@empresa.com.br",
-    acao: "TITLE_CREATED",
-    entidadeId: "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-    enderecoIp: "10.0.0.67",
-  },
-  {
-    id: "7",
-    dataHora: "23/05/2026 09:45:55",
-    usuario: "financeiro@empresa.com.br",
-    acao: "INSTALLMENT_PAID",
-    entidadeId: "c3d4e5f6-a7b8-9012-cdef-123456789012",
-    enderecoIp: "10.0.0.45",
-  },
-  {
-    id: "8",
-    dataHora: "22/05/2026 18:30:41",
-    usuario: "admin@proofchain.com",
-    acao: "TITLE_REMOVED",
-    entidadeId: "d4e5f6a7-b8c9-0123-defa-234567890123",
-    enderecoIp: "192.168.1.105",
-  },
-  {
-    id: "9",
-    dataHora: "22/05/2026 16:12:29",
-    usuario: "system@proofchain.internal",
-    acao: "INTEGRITY_BREACH_DETECTED",
-    entidadeId: "e5f6a7b8-c9d0-1234-efab-345678901234",
-    enderecoIp: "127.0.0.1",
-  },
-  {
-    id: "10",
-    dataHora: "22/05/2026 14:05:18",
-    usuario: "auditor@empresa.com.br",
-    acao: "USER_LOGIN",
-    entidadeId: "-",
-    enderecoIp: "187.45.123.78",
-  },
-];
+import { auditoriaService } from "@/services/auditoriaService";
+import { useToast } from "@/components/ui/use-toast";
 
 export default function Auditoria() {
+  const location = useLocation();
   const [currentPage, setCurrentPage] = useState(1);
-  const [logs] = useState<LogEntry[]>(mockLogs);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [totalResults, setTotalResults] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const { toast } = useToast();
 
-  const handleFilterChange = (filters: {
+  const [filtros, setFiltros] = useState<{
+    uuid?: string;
+    acao?: string;
+    dataInicio?: string;
+    dataFim?: string;
+  }>(() => {
+    // Inicializa os filtros baseado nos query params da URL
+    const params = new URLSearchParams(location.search);
+    const acaoParam = params.get("acao");
+    return {
+      acao: acaoParam ? acaoParam : undefined
+    };
+  });
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchLogs = async () => {
+      setIsLoading(true);
+      try {
+        const response = await auditoriaService.getLogs({
+          page: currentPage,
+          limit: 10,
+          ...filtros
+        });
+        
+        if (isMounted) {
+          const mappedLogs: LogEntry[] = response.data.map((log) => ({
+            id: log.id,
+            // Formatar dataHora vindo da API
+            dataHora: new Date(log.dataHora).toLocaleString('pt-BR'),
+            // usuario pode vir como objeto na resposta
+            usuario: log.usuario?.nome || log.usuario?.email || 'Sistema',
+            acao: log.acao,
+            entidadeId: log.entidadeId || '-',
+            enderecoIp: log.enderecoIp || '-',
+          }));
+          
+          setLogs(mappedLogs);
+          setTotalResults(response.meta.totalItems);
+        }
+      } catch (error) {
+        if (isMounted) {
+          toast({
+            title: "Erro ao carregar auditoria",
+            description: "Não foi possível carregar os logs do servidor.",
+            variant: "destructive"
+          });
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    fetchLogs();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentPage, filtros, toast]);
+
+  const handleFilterChange = (novosFiltros: {
     uuid: string;
     acao: string;
     dataInicio: Date | undefined;
     dataFim: Date | undefined;
   }) => {
-    // Aqui seria feita a chamada à API com os filtros
-    console.log("Filtros aplicados:", filters);
+    setFiltros({
+      uuid: novosFiltros.uuid || undefined,
+      acao: novosFiltros.acao !== "all" ? novosFiltros.acao : undefined,
+      dataInicio: novosFiltros.dataInicio ? novosFiltros.dataInicio.toISOString() : undefined,
+      dataFim: novosFiltros.dataFim ? novosFiltros.dataFim.toISOString() : undefined,
+    });
+    setCurrentPage(1); // Reseta a paginação ao filtrar
   };
 
   const handleExportExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(logs);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Auditoria");
-    XLSX.writeFile(wb, "ProofChain_Auditoria.xlsx");
+    // Na Task 6.1 aprimoraremos isso. Por hora exporta o que está na tela
+    exportToExcel(logs, "Auditoria", "ProofChain_Auditoria.xlsx");
   };
 
   return (
@@ -128,7 +117,12 @@ export default function Auditoria() {
               </p>
             </div>
           </div>
-          <Button variant="outline" className="gap-2" onClick={handleExportExcel}>
+          <Button 
+            variant="outline" 
+            className="gap-2" 
+            onClick={handleExportExcel}
+            disabled={logs.length === 0}
+          >
             <Download className="h-4 w-4" />
             Exportar para Excel
           </Button>
@@ -136,17 +130,19 @@ export default function Auditoria() {
 
         {/* Filtros */}
         <div className="mb-6">
-          <FiltrosAuditoria onFilterChange={handleFilterChange} />
+          <FiltrosAuditoria onFilterChange={handleFilterChange} initialAcao={filtros.acao} />
         </div>
 
         {/* Tabela de Logs */}
-        <TabelaLogs
-          logs={logs}
-          currentPage={currentPage}
-          totalResults={245}
-          resultsPerPage={10}
-          onPageChange={setCurrentPage}
-        />
+        <div className={isLoading ? "opacity-50 pointer-events-none transition-opacity" : "transition-opacity"}>
+          <TabelaLogs
+            logs={logs}
+            currentPage={currentPage}
+            totalResults={totalResults}
+            resultsPerPage={10}
+            onPageChange={setCurrentPage}
+          />
+        </div>
       </main>
     </div>
   );

@@ -3,6 +3,7 @@ import { UsuariosHeader } from "@/components/usuarios/usuarios-header";
 import { UsuariosTable, type Usuario } from "@/components/usuarios/usuarios-table";
 import { NovoUsuarioModal } from "@/components/usuarios/novo-usuario-modal";
 import { useToast } from "@/components/ui/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 // Dados mockados para demonstração
 const mockUsuarios: Usuario[] = [
   {
@@ -69,11 +70,11 @@ export default function Usuarios() {
   const [usuariosList, setUsuariosList] = useState<Usuario[]>(mockUsuarios);
   const { toast } = useToast();
 
-  const currentUser = { nome: 'Operador Logado', role: 'ADMINISTRADOR' };
-  const canManage = currentUser.role === 'ADMINISTRADOR';
+  const { user } = useAuth();
+  const canManage = user?.role === 'ADMINISTRADOR';
 
   const handleAddUser = (novoUser: { nome: string; email: string; role: string }) => {
-    console.log("🔒 LOG DE AUDITORIA SALVO: Ação de cadastro executada por", currentUser.nome, "Data/Hora:", new Date().toISOString());
+    console.log("🔒 LOG DE AUDITORIA SALVO: Ação de cadastro executada por", user?.nome, "Data/Hora:", new Date().toISOString());
     const newUsuario: Usuario = {
       id: `usr_${Date.now()}`,
       ...novoUser,
@@ -88,7 +89,7 @@ export default function Usuarios() {
   };
 
   const handleDeleteUser = (id: string, nome: string) => {
-    console.log("🔒 LOG DE AUDITORIA SALVO: Ação de revogação executada por", currentUser.nome, "Data/Hora:", new Date().toISOString());
+    console.log("🔒 LOG DE AUDITORIA SALVO: Ação de revogação executada por", user?.nome, "Data/Hora:", new Date().toISOString());
     setUsuariosList(prev => prev.filter(u => u.id !== id));
     toast({
       title: "Acesso Revogado",
