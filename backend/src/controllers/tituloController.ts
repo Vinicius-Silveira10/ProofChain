@@ -6,8 +6,22 @@ import { verifyTituloIntegrity } from '../services/verificationService';
 import { AuthRequest } from '../middleware/auth';
 import { extractClientIp } from '../middleware/auditLog';
 
-// Instanciar o service (Usa o singleton do prisma e o facade do provider)
-const tituloService = new TituloService(prisma, initProvider());
+// Instanciar o service de forma lazy com blindagem anti-crash
+// Se a blockchain falhar no boot (chave inválida, RPC down), o servidor
+// continua respondendo — apenas a rota de criação retorna 503.
+let _tituloService: TituloService | null = null;
+
+function getTituloService(): TituloService {
+  if (_tituloService) return _tituloService;
+  try {
+    _tituloService = new TituloService(prisma, initProvider());
+    return _tituloService;
+  } catch (bootErr: any) {
+    // Log no boot mas não derruba o processo
+    console.error('[CONTROLLER BOOT] Falha ao inicializar BlockchainService:', bootErr?.message ?? bootErr);
+    throw new Error('BLOCKCHAIN_UNAVAILABLE');
+  }
+}
 
 export const tituloController = {
   /**
@@ -20,16 +34,30 @@ export const tituloController = {
         return;
       }
 
-      // Evita falha do BigInt construtor
-      if (req.body.valor_centavos === undefined || req.body.valor_centavos === null) {
+      // Validação de presença e tipo do valor_centavos
+      // BigInt("1234.56") lanca SyntaxError — devemos rejeitar floats aqui
+      const rawValor = req.body.valor_centavos;
+      if (rawValor === undefined || rawValor === null) {
         res.status(400).json({ error: 'valor_centavos é obrigatório' });
+        return;
+      }
+      if (typeof rawValor === 'number' && !Number.isInteger(rawValor)) {
+        res.status(400).json({ error: 'valor_centavos deve ser um número inteiro (sem casas decimais). Ex: R$ 12,34 = 1234.' });
+        return;
+      }
+
+      let valorCentavos: bigint;
+      try {
+        valorCentavos = BigInt(rawValor);
+      } catch {
+        res.status(400).json({ error: 'valor_centavos inválido — não é um inteiro válido.' });
         return;
       }
 
       const input = {
         cnpj_emissor: req.body.cnpj_emissor,
         credor: req.body.credor,
-        valor_centavos: BigInt(req.body.valor_centavos),
+        valor_centavos: valorCentavos,
         data_vencimento: new Date(req.body.data_vencimento),
       };
 
@@ -38,10 +66,23 @@ export const tituloController = {
         clientIp: extractClientIp(req),
       };
 
-      const titulo = await tituloService.create(input, ctx);
+      const titulo = await getTituloService().create(input, ctx);
 
       res.status(201).json(titulo);
     } catch (error: any) {
+      // Task 1: Log estruturado — nunca deixar o erro passar sem rastreio
+      console.error('[ERRO CRÍTICO - POST /titulos]', {
+        message: error?.message,
+        code:    error?.code,
+        name:    error?.name,
+        userId:  req.user?.id,
+        body:    { ...req.body, cnpj_emissor: req.body.cnpj_emissor?.slice(0, 4) + '***' }, // ofusca parcialmente
+      });
+
+      if (error.message === 'BLOCKCHAIN_UNAVAILABLE') {
+        res.status(503).json({ error: 'Serviço blockchain indisponível. Tente novamente em instantes.' });
+        return;
+      }
       if (error.message === 'BLOCKCHAIN_TIMEOUT') {
         res.status(504).json({ error: 'Timeout na confirmação blockchain. Tente novamente.' });
         return;
@@ -52,7 +93,7 @@ export const tituloController = {
       }
       if (error instanceof ValidationError) {
         if (error.message.includes('cnpj')) {
-          res.status(400).json({ error: 'CNPJ inválido.' });
+          res.status(400).json({ error: 'CNPJ inválido. Verifique os 14 dígitos e o dígito verificador.' });
           return;
         }
         if (error.message.includes('vencimento')) {
@@ -67,8 +108,11 @@ export const tituloController = {
         return;
       }
 
-      console.error('Error in createTitulo:', error);
-      res.status(500).json({ error: 'Erro interno no servidor' });
+      // Fallback genérico — garante que o servidor NUNCA cai por exception não tratada
+      res.status(500).json({
+        error: 'Erro interno ao processar o título',
+        details: process.env.NODE_ENV !== 'production' ? error?.message : undefined,
+      });
     }
   },
 
@@ -145,10 +189,19 @@ export const tituloController = {
       res.status(200).json({
         ...titulo,
         valor_centavos: titulo.valor_centavos.toString(),
-        installments: installments.map((inst: any) => ({
-          ...inst,
-          valor_centavos: inst.valor_centavos ? inst.valor_centavos.toString() : undefined
-        }))
+        installments: installments.map((inst: any) => {
+          // Extrai todos os campos manualmente para evitar prototype properties do Prisma que quebram JSON.stringify
+          const safeInst = { ...inst };
+          if (safeInst.valor_centavos !== undefined && safeInst.valor_centavos !== null) {
+            safeInst.valor_centavos = safeInst.valor_centavos.toString();
+          }
+          if (safeInst.createdAt) safeInst.createdAt = safeInst.createdAt.toISOString();
+          if (safeInst.updatedAt) safeInst.updatedAt = safeInst.updatedAt.toISOString();
+          if (safeInst.data_vencimento_parcela) safeInst.data_vencimento_parcela = safeInst.data_vencimento_parcela.toISOString();
+          if (safeInst.data_hora_pagamento) safeInst.data_hora_pagamento = safeInst.data_hora_pagamento.toISOString();
+          
+          return safeInst;
+        })
       });
     } catch (error) {
       console.error('Error fetching titulo by id:', error);
@@ -215,5 +268,77 @@ export const tituloController = {
       console.error('Error in verifyAutenticidade:', error);
       res.status(500).json({ error: 'Erro interno no servidor' });
     }
-  }
+  },
+
+  /**
+   * POST /api/titulos/:id/verify-now
+   * Dispara verificação de integridade sob demanda para um título individual.
+   * Atualiza o status no banco e registra o AuditLog.
+   * Requer autenticação (AUDITOR ou ADMIN).
+   */
+  async verifyNow(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const id = req.params.id as string;
+
+      const titulo = await prisma.tituloDivida.findUnique({
+        where: { id },
+      });
+
+      if (!titulo) {
+        res.status(404).json({ error: 'Título não encontrado' });
+        return;
+      }
+
+      // Disparar a verificação criptográfica
+      const result = await verifyTituloIntegrity(titulo);
+
+      // Atualizar status no banco se mudou
+      if (titulo.integrity_status !== result.status) {
+        await prisma.$transaction(async (tx) => {
+          await tx.tituloDivida.update({
+            where: { id },
+            data: { integrity_status: result.status as any },
+          });
+          await tx.auditLog.create({
+            data: {
+              tituloDividaId: id,
+              userId: req.user?.id || null,
+              action: 'VERIFICATION_REQUESTED',
+              clientIp: extractClientIp(req),
+              diff_snapshot: {
+                summary: `Verificação manual acionada pelo usuário. Status: ${titulo.integrity_status} → ${result.status}`,
+                triggeredBy: req.user?.email || 'unknown',
+              },
+            },
+          });
+        });
+      } else {
+        // Mesmo sem mudança, registrar que a verificação foi solicitada
+        await prisma.auditLog.create({
+          data: {
+            tituloDividaId: id,
+            userId: req.user?.id || null,
+            action: 'VERIFICATION_REQUESTED',
+            clientIp: extractClientIp(req),
+            diff_snapshot: {
+              summary: `Verificação manual acionada. Status confirmado: ${result.status}`,
+              triggeredBy: req.user?.email || 'unknown',
+            },
+          },
+        });
+      }
+
+      res.status(200).json({
+        status: result.status,
+        sqlHash: result.sqlHash,
+        blockchainHash: result.blockchainHash,
+        isMatch: result.isMatch,
+        checkedAt: result.checkedAt.toISOString(),
+        previousStatus: titulo.integrity_status,
+      });
+    } catch (error) {
+      console.error('Error in verifyNow:', error);
+      res.status(500).json({ error: 'Erro interno ao verificar integridade' });
+    }
+  },
 };

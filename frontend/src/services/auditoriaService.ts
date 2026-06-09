@@ -43,12 +43,19 @@ export const auditoriaService = {
       } : null,
       acao: log.action,
       entidadeId: log.tituloDividaId,
-      enderecoIp: log.clientIp
+      enderecoIp: log.clientIp,
+      detalhes: log.diff_snapshot
     }));
 
     return {
       data: mappedData,
-      meta: response.data.meta
+      // BUG-009: backend retorna { total, totalPages, page, limit }
+      // mas PaginatedResponse e Auditoria.tsx esperam { totalItems, totalPages, currentPage }
+      meta: {
+        totalItems: response.data.meta.total,
+        totalPages: response.data.meta.totalPages,
+        currentPage: response.data.meta.page,
+      }
     };
   },
 };

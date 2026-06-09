@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { validateEnv, env } from './config/env';
+import { swaggerSpec, swaggerUi } from './config/swagger';
 import { authRoutes } from './routes/authRoutes';
 import { tituloRoutes } from './routes/tituloRoutes';
 import { auditLogRoutes } from './routes/auditLogRoutes';
@@ -32,6 +33,26 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// 3.1 Documentação interativa Swagger UI — disponível em /api/docs
+// Exposta em todos os ambientes (exceto produção estrita)
+if (env.nodeEnv !== 'production') {
+  app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+    customSiteTitle: 'ProofChain API Docs',
+    swaggerOptions: {
+      persistAuthorization: true,       // mantém o JWT entre recarregamentos
+      displayRequestDuration: true,     // mostra tempo de resposta nas chamadas
+      filter: true,                     // habilita busca por endpoint
+      docExpansion: 'none',             // começa com todos os grupos recolhidos
+    },
+  }));
+
+  // Endpoint que serve a spec raw em JSON (útil para Insomnia / Postman)
+  app.get('/api/docs.json', (_req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(swaggerSpec);
+  });
+}
+
 app.use('/api/auth', authRoutes);
 app.use('/api/titulos', tituloRoutes);
 app.use('/api/public/titulos', tituloRoutes); // Permite que a rota pública do frontend funcione sem cair no fallback
@@ -48,5 +69,30 @@ if (require.main === module) {
     console.log(`🚀 Backend inicializado na porta ${env.port}`);
   });
 }
+
+// ============================================================================
+// Task 3: SAFETY NET — Listeners globais de processo
+// Garante que o servidor NUNCA derruba silenciosamente por exceções não tratadas.
+// ============================================================================
+
+// Captura Promises rejeitadas sem .catch() — ex: chamadas assíncronas sem await
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🔴 [SAFETY NET] Unhandled Promise Rejection:', {
+    promise,
+    reason,
+  });
+  // NÃO encerra o processo em dev — apenas loga para diagnóstico
+  // Em produção, considere: process.exit(1) + restart via PM2/systemd
+});
+
+// Captura exceções síncronas que escaparam de todos os try/catch
+process.on('uncaughtException', (err) => {
+  console.error('🔴 [SAFETY NET] Uncaught Exception — servidor continua:', {
+    name:    err.name,
+    message: err.message,
+    stack:   err.stack,
+  });
+  // NÃO encerra o processo — o servidor permanece de pé
+});
 
 export default app;

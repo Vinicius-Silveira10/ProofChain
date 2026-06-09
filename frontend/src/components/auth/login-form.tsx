@@ -4,9 +4,11 @@ import { Shield, Eye, EyeOff, AlertCircle, Loader2, ArrowLeft } from "lucide-rea
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { authService } from "@/services/authService";
+import { useAuth } from "@/contexts/AuthContext";
 
 export function LoginForm() {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -19,12 +21,15 @@ export function LoginForm() {
     setErrorMessage(null);
 
     try {
-      await authService.login(email, password);
+      // authService.login() grava no localStorage
+      const response = await authService.login(email, password);
+      // login() do AuthContext sincroniza o estado em memória (evita dependência de re-render)
+      login(response.token, response.user);
       navigate("/dashboard");
     } catch (error: any) {
       console.error("Falha no login:", error);
-      // Sanitização de Mensagens de Erro
-      const message = error.response?.data?.message || "Erro de conexão ao tentar autenticar. Tente novamente.";
+      const backendMsg = error.response?.data?.error || error.response?.data?.message;
+      const message = backendMsg || "Erro de conexão ao tentar autenticar. Tente novamente.";
       setErrorMessage(message);
     } finally {
       setIsLoading(false);

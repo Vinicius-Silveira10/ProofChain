@@ -46,7 +46,7 @@ describe("ProofChainRegistry", () => {
       const id = idOf("titulo-001");
       const hash = hashOf("dados-do-titulo");
 
-      await contract.storeHash(id, hash);
+      await contract.storeHash(id, hash, "titulo-001");
 
       expect(await contract.getHash(id)).to.equal(hash);
     });
@@ -55,7 +55,7 @@ describe("ProofChainRegistry", () => {
       const id = idOf("titulo-003");
       const hash = hashOf("dados-003");
 
-      const tx = await contract.storeHash(id, hash);
+      const tx = await contract.storeHash(id, hash, "titulo-003");
       const receipt = await tx.wait();
       const block = await ethers.provider.getBlock(receipt!.blockNumber);
 
@@ -64,32 +64,39 @@ describe("ProofChainRegistry", () => {
       expect(bn).to.equal(BigInt(receipt!.blockNumber));
     });
 
-    it("[T4] Deve emitir evento HashStored com id, hash e timestamp corretos", async () => {
+    it("[T4] Deve emitir evento HashStored com id, hash, uuid e timestamp corretos", async () => {
       const id = idOf("titulo-002");
       const hash = hashOf("dados-002");
 
-      await expect(contract.storeHash(id, hash))
+      await expect(contract.storeHash(id, hash, "titulo-002"))
         .to.emit(contract, "HashStored")
-        .withArgs(id, hash, anyValue(), anyValue());
+        .withArgs(id, hash, "titulo-002", anyValue(), anyValue());
     });
 
     it("[T5] Deve rejeitar hash bytes32(0) (hash vazio inválido)", async () => {
-      await expect(contract.storeHash(idOf("titulo-004"), ethers.ZeroHash))
+      await expect(contract.storeHash(idOf("titulo-004"), ethers.ZeroHash, "titulo-004"))
         .to.be.revertedWithCustomError(contract, "ZeroHash");
     });
 
     it("[T6] Deve rejeitar id vazio — bytes32(0) equivalente ao id vazio", async () => {
-      await expect(contract.storeHash(ethers.ZeroHash, hashOf("qualquer")))
+      await expect(contract.storeHash(ethers.ZeroHash, hashOf("qualquer"), "titulo-x"))
         .to.be.revertedWithCustomError(contract, "EmptyId");
+    });
+
+    it("[T6b] Deve rejeitar uuid vazio", async () => {
+      const id = idOf("titulo-uuid-vazio");
+      const hash = hashOf("dados-uuid-vazio");
+      await expect(contract.storeHash(id, hash, ""))
+        .to.be.revertedWithCustomError(contract, "EmptyUuid");
     });
 
     it("[T7] Deve rejeitar registro duplicado para o mesmo id (hashNotExists)", async () => {
       const id = idOf("titulo-003");
       const hash = hashOf("dados-003");
 
-      await contract.storeHash(id, hash);
+      await contract.storeHash(id, hash, "titulo-003");
 
-      await expect(contract.storeHash(id, hash))
+      await expect(contract.storeHash(id, hash, "titulo-003"))
         .to.be.revertedWithCustomError(contract, "AlreadyRegistered")
         .withArgs(id);
     });
@@ -98,7 +105,7 @@ describe("ProofChainRegistry", () => {
       const id = idOf("titulo-005");
       const hash = hashOf("dados-005");
 
-      await expect(contract.connect(attacker).storeHash(id, hash))
+      await expect(contract.connect(attacker).storeHash(id, hash, "titulo-005"))
         .to.be.revertedWithCustomError(contract, "NotOwner");
     });
   });
@@ -118,7 +125,7 @@ describe("ProofChainRegistry", () => {
 
     it("[T11] hashExists deve retornar true após registro", async () => {
       const id = idOf("titulo-exists");
-      await contract.storeHash(id, hashOf("dados"));
+      await contract.storeHash(id, hashOf("dados"), "titulo-exists");
       expect(await contract.hashExists(id)).to.equal(true);
     });
 
@@ -173,22 +180,29 @@ describe("ProofChainRegistry", () => {
     it("Armazena múltiplos hashes em uma única transação", async () => {
       const ids = [idOf("b-1"), idOf("b-2"), idOf("b-3")];
       const hashes = [hashOf("a"), hashOf("b"), hashOf("c")];
+      const uuids = ["b-1", "b-2", "b-3"];
 
-      await contract.storeHashBatch(ids, hashes);
+      await contract.storeHashBatch(ids, hashes, uuids);
 
       for (let i = 0; i < ids.length; i++) {
         expect(await contract.getHash(ids[i])).to.equal(hashes[i]);
       }
     });
 
-    it("Rejeita arrays com tamanhos diferentes", async () => {
+    it("Rejeita arrays com tamanhos diferentes (ids vs hashes)", async () => {
       await expect(
-        contract.storeHashBatch([idOf("a")], [hashOf("a"), hashOf("b")])
+        contract.storeHashBatch([idOf("a")], [hashOf("a"), hashOf("b")], ["a"])
+      ).to.be.revertedWithCustomError(contract, "LengthMismatch");
+    });
+
+    it("Rejeita arrays com tamanhos diferentes (ids vs uuids)", async () => {
+      await expect(
+        contract.storeHashBatch([idOf("a")], [hashOf("a")], ["a", "b"])
       ).to.be.revertedWithCustomError(contract, "LengthMismatch");
     });
 
     it("Rejeita batch vazio", async () => {
-      await expect(contract.storeHashBatch([], []))
+      await expect(contract.storeHashBatch([], [], []))
         .to.be.revertedWithCustomError(contract, "EmptyBatch");
     });
 
@@ -196,10 +210,14 @@ describe("ProofChainRegistry", () => {
       const id1 = idOf("atomic-1");
       const id2 = idOf("atomic-2");
 
-      await contract.storeHash(id1, hashOf("first"));
+      await contract.storeHash(id1, hashOf("first"), "atomic-1");
 
       await expect(
-        contract.storeHashBatch([id2, id1], [hashOf("x"), hashOf("y")])
+        contract.storeHashBatch(
+          [id2, id1],
+          [hashOf("x"), hashOf("y")],
+          ["atomic-2", "atomic-1"]
+        )
       ).to.be.revertedWithCustomError(contract, "AlreadyRegistered");
 
       expect(await contract.hashExists(id2)).to.equal(false);
@@ -214,13 +232,13 @@ describe("ProofChainRegistry", () => {
     it("Retorna true quando hash bate", async () => {
       const id = idOf("v-1");
       const hash = hashOf("verify-data");
-      await contract.storeHash(id, hash);
+      await contract.storeHash(id, hash, "v-1");
       expect(await contract.verify(id, hash)).to.equal(true);
     });
 
     it("Retorna false quando hash diverge (FRAUDE DETECTADA)", async () => {
       const id = idOf("v-2");
-      await contract.storeHash(id, hashOf("original"));
+      await contract.storeHash(id, hashOf("original"), "v-2");
       expect(await contract.verify(id, hashOf("adulterado"))).to.equal(false);
     });
   });
@@ -232,14 +250,14 @@ describe("ProofChainRegistry", () => {
   describe("ProofChainRegistry — Pausable (circuit breaker)", () => {
     it("Bloqueia storeHash quando pausado", async () => {
       await contract.pause();
-      await expect(contract.storeHash(idOf("p-1"), hashOf("x")))
+      await expect(contract.storeHash(idOf("p-1"), hashOf("x"), "p-1"))
         .to.be.revertedWithCustomError(contract, "IsPaused");
     });
 
     it("Permite leitura mesmo quando pausado (RNF-REL-003)", async () => {
       const id = idOf("p-2");
       const hash = hashOf("data");
-      await contract.storeHash(id, hash);
+      await contract.storeHash(id, hash, "p-2");
       await contract.pause();
       expect(await contract.getHash(id)).to.equal(hash);
     });
@@ -253,7 +271,7 @@ describe("ProofChainRegistry", () => {
       await contract.pause();
       await contract.unpause();
       // storeHash deve funcionar novamente após unpause
-      await expect(contract.storeHash(idOf("p-3"), hashOf("y"))).to.not.be.reverted;
+      await expect(contract.storeHash(idOf("p-3"), hashOf("y"), "p-3")).to.not.be.reverted;
     });
   });
 });

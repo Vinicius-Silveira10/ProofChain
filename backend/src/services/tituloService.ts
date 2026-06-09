@@ -50,19 +50,34 @@ export class TituloService {
     });
 
     // ---------------- PASSO 3: ancoragem (blockchain-first) ----------------
-    let txHash: string;
-    let etherscanUrl: string;
-    
-    try {
-      // Se a blockchain falhar ou der timeout, nada vai para o banco.
-      const anchor = await this.blockchain.anchorHash(id, hash);
-      txHash = anchor.txHash;
-      etherscanUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
-    } catch (err: unknown) {
-      if (err instanceof BlockchainError && err.code === 'TIMEOUT') {
-        throw new Error('BLOCKCHAIN_TIMEOUT');
+    // BYPASS DE DESENVOLVIMENTO: Se CONTRACT_ADDRESS for o placeholder zero ou
+    // DISABLE_BLOCKCHAIN=true, pula a ancoragem e persiste com PENDING.
+    // Em produção, com contrato deployado, o fluxo blockchain-first é mantido integralmente.
+    const isBypassMode =
+      process.env.DISABLE_BLOCKCHAIN === 'true' ||
+      process.env.CONTRACT_ADDRESS === '0x0000000000000000000000000000000000000000';
+
+    let txHash: string | null = null;
+    let etherscanUrl: string | null = null;
+    let blockchainAnchored = false;
+
+    if (isBypassMode) {
+      console.warn(
+        `[TituloService] ⚠️  BYPASS ATIVO: blockchain desabilitada (CONTRACT_ADDRESS=zero ou DISABLE_BLOCKCHAIN=true). ` +
+        `Título ${id} será salvo com integrity_status=PENDING.`
+      );
+    } else {
+      try {
+        const anchor = await this.blockchain.anchorHash(id, hash);
+        txHash = anchor.txHash;
+        etherscanUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
+        blockchainAnchored = true;
+      } catch (err: unknown) {
+        if (err instanceof BlockchainError && err.code === 'TIMEOUT') {
+          throw new Error('BLOCKCHAIN_TIMEOUT');
+        }
+        throw new Error('BLOCKCHAIN_ERROR');
       }
-      throw new Error('BLOCKCHAIN_ERROR');
     }
 
     // ---------------- PASSO 4: Persistência SQL (apenas após sucesso na blockchain) ----------------
@@ -76,9 +91,13 @@ export class TituloService {
             valor_centavos: input.valor_centavos,
             data_vencimento: input.data_vencimento,
             hash_integridade: hash,
-            tx_hash: txHash,
+            // tx_hash é null no modo bypass (PENDING) e preenchido no modo real
+            tx_hash: txHash ?? null,
             status: TituloStatus.ACTIVE,
-            integrity_status: IntegrityStatus.VERIFIED,
+            // integrity_status depende se a ancoragem ocorreu
+            integrity_status: blockchainAnchored
+              ? IntegrityStatus.VERIFIED
+              : IntegrityStatus.PENDING,
           },
         });
 
@@ -185,5 +204,15 @@ export class ValidationError extends Error {
 }
 
 function serializeForAudit(t: { valor_centavos: bigint } & Record<string, unknown>) {
-  return { ...t, valor_centavos: t.valor_centavos.toString() };
+  const safeT = { ...t, valor_centavos: t.valor_centavos.toString() } as Record<string, any>;
+  
+  // Prisma's InputJsonValue strictly rejects Date objects. 
+  // We must convert all dates to strings before persisting in the JSON column.
+  for (const key of Object.keys(safeT)) {
+    if (safeT[key] instanceof Date) {
+      safeT[key] = safeT[key].toISOString();
+    }
+  }
+  
+  return safeT;
 }

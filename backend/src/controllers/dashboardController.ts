@@ -7,6 +7,7 @@ interface CacheStructure {
   data: any | null;
   timestamp: number;
 }
+// Cache zerado sempre que o módulo é carregado (hot-reload incluso)
 let metricsCache: CacheStructure = { data: null, timestamp: 0 };
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
 
@@ -34,14 +35,19 @@ export const dashboardController = {
       const totalBRL = (Number(totalCentavos) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
       // 2. Agregação de Distribuição Criptográfica
-      const [ativos_totais, comprometidos, verificados, pendentes] = await Promise.all([
+      const [ativos_totais, comprometidos, verificados, pendentes, alertas_fraude_count] = await Promise.all([
         prisma.tituloDivida.count({ where: { status: 'ACTIVE' } }),
         prisma.tituloDivida.count({ where: { status: 'ACTIVE', integrity_status: 'COMPROMISED' } }),
         prisma.tituloDivida.count({ where: { status: 'ACTIVE', integrity_status: 'VERIFIED' } }),
-        prisma.tituloDivida.count({ where: { status: 'ACTIVE', integrity_status: 'PENDING' } })
+        prisma.tituloDivida.count({ where: { status: 'ACTIVE', integrity_status: 'PENDING' } }),
+        // Conta eventos de fraude nos logs de auditoria — reflete a realidade mesmo no modo bypass,
+        // onde o título pode ter integrity_status=PENDING mas o scanner já detectou e registrou a violação.
+        prisma.auditLog.count({ where: { action: 'INTEGRITY_BREACH_DETECTED' } })
       ]);
 
-      const percentual_integridade = ativos_totais === 0 ? 100 : Math.round((verificados / ativos_totais) * 100);
+      // A integridade da carteira só é afetada por títulos explicitamente COMPROMETIDOS.
+      // Títulos PENDENTES (aguardando rede ou RPC off) não diminuem a integridade da base.
+      const percentual_integridade = ativos_totais === 0 ? 100 : Math.round(((ativos_totais - comprometidos) / ativos_totais) * 100);
 
       // 3. Emissões nos Últimos 30 Dias (100% Processado no Engine do Banco de Dados)
       const thirtyDaysAgo = new Date();
@@ -80,7 +86,9 @@ export const dashboardController = {
         total_ativos_reais: totalBRL,
         total_centavos: Number(totalCentavos),
         total_titulos_ativos: ativos_totais,
-        total_titulos_comprometidos: comprometidos,
+        // alertas_fraude: contagem de eventos de log INTEGRITY_BREACH_DETECTED (fonte verdade)
+        // comprometidos: contagem de títulos com integrity_status=COMPROMISED (pode ser 0 no modo bypass)
+        total_titulos_comprometidos: alertas_fraude_count,
         percentual_integridade,
         emissoes_30_dias,
         distribuicao_integridade: {
@@ -91,7 +99,7 @@ export const dashboardController = {
         ultima_varredura: {
           executada_em: ultimaVarreduraGlobal ? ultimaVarreduraGlobal.timestamp.toISOString() : new Date().toISOString(),
           total_verificados: ativos_totais,
-          anomalias_detectadas: comprometidos
+          anomalias_detectadas: alertas_fraude_count
         }
       };
 

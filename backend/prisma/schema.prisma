@@ -131,8 +131,8 @@ model AuditLog {
   id              String      @id @default(uuid())
   tituloDividaId  String
   tituloDivida    TituloDivida @relation(fields: [tituloDividaId], references: [id])
-  userId          String
-  user            User        @relation(fields: [userId], references: [id])
+  userId          String?
+  user            User?       @relation(fields: [userId], references: [id])
   action          AuditAction
   clientIp        String
   diff_snapshot   Json?       // { before: {...}, after: {...} }

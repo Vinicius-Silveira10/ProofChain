@@ -71,7 +71,7 @@ export default function Usuarios() {
   const { toast } = useToast();
 
   const { user } = useAuth();
-  const canManage = user?.role === 'ADMINISTRADOR';
+  const canManage = user?.role === 'ADMINISTRADOR' || user?.role === 'ADMIN';
 
   const handleAddUser = (novoUser: { nome: string; email: string; role: string }) => {
     console.log("🔒 LOG DE AUDITORIA SALVO: Ação de cadastro executada por", user?.nome, "Data/Hora:", new Date().toISOString());

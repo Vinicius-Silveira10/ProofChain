@@ -33,14 +33,16 @@ import { hashToBytes32 } from "./hashEngine";
  */
 
 const ABI = [
-  "function storeHash(bytes32 id, bytes32 hash) external",
-  "function storeHashBatch(bytes32[] ids, bytes32[] hashes) external",
+  // v2 pós-auditoria: storeHash/Batch recebem uuid para emissão no evento on-chain
+  "function storeHash(bytes32 id, bytes32 hash, string uuid) external",
+  "function storeHashBatch(bytes32[] ids, bytes32[] hashes, string[] uuids) external",
   "function getHash(bytes32 id) external view returns (bytes32)",
   "function getProof(bytes32 id) external view returns (bytes32 hash, uint256 timestamp, uint256 blockNumber)",
   "function hashExists(bytes32 id) external view returns (bool)",
   "function verify(bytes32 id, bytes32 candidateHash) external view returns (bool)",
   "function paused() external view returns (bool)",
-  "event HashStored(bytes32 indexed id, bytes32 hash, uint256 timestamp, uint256 blockNumber)",
+  // v2: hash indexed para busca O(1), uuid para auditoria on-chain
+  "event HashStored(bytes32 indexed id, bytes32 indexed hash, string uuid, uint256 timestamp, uint256 blockNumber)",
 ];
 
 const DEFAULT_TIMEOUT_MS = 60_000; // RN-REC-003
@@ -60,17 +62,6 @@ export interface AnchorResult {
   onChainId: string; // bytes32 (keccak256(uuid))
 }
 
-export type IntegrityStatus = "VERIFIED" | "COMPROMISED" | "PENDING";
-
-export interface VerificationResult {
-  status: IntegrityStatus;
-  onChainHash?: string;
-  candidateHash: string;
-  timestamp?: number;
-  blockNumber?: number;
-  /** Razão quando PENDING — ajuda triage de incidente */
-  reason?: string;
-}
 
 export class BlockchainService {
   private readonly provider: JsonRpcProvider;
@@ -84,9 +75,33 @@ export class BlockchainService {
     if (!config.privateKey) throw new Error("BlockchainService: privateKey required");
     if (!config.contractAddress) throw new Error("BlockchainService: contractAddress required");
 
+    // Task 2.1: Normalizar chave privada — ethers.Wallet exige prefixo '0x'
+    // O .env pode armazenar a chave sem o prefixo (64 chars hex puros)
+    const normalizedKey = config.privateKey.startsWith('0x')
+      ? config.privateKey
+      : `0x${config.privateKey}`;
+
     this.provider = new JsonRpcProvider(config.rpcUrl);
-    this.wallet = new Wallet(config.privateKey, this.provider);
-    this.contract = new Contract(config.contractAddress, ABI, this.wallet);
+
+    // Task 2.2: Isolar instanciação da Wallet e do Contract em try/catch
+    // Um erro aqui (chave inválida, address inválido) não deve derrubar o processo
+    try {
+      this.wallet = new Wallet(normalizedKey, this.provider);
+    } catch (err: any) {
+      throw new Error(
+        `BlockchainService: falha ao criar Wallet — verifique BACKEND_WALLET_PRIVATE_KEY. Detalhe: ${err?.message}`
+      );
+    }
+
+    try {
+      // Task 2.2: Contrato instanciado com wallet (Signer), nunca apenas com provider
+      this.contract = new Contract(config.contractAddress, ABI, this.wallet);
+    } catch (err: any) {
+      throw new Error(
+        `BlockchainService: falha ao criar Contract — verifique CONTRACT_ADDRESS. Detalhe: ${err?.message}`
+      );
+    }
+
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.confirmations = config.confirmations ?? DEFAULT_CONFIRMATIONS;
   }
@@ -137,7 +152,8 @@ export class BlockchainService {
 
     let tx: ContractTransactionResponse;
     try {
-      tx = (await this.contract.storeHash(id, hashBytes32)) as ContractTransactionResponse;
+      // v2: passa o UUID original para emissão no evento on-chain (auditoria forense)
+      tx = (await this.contract.storeHash(id, hashBytes32, uuid)) as ContractTransactionResponse;
     } catch (err) {
       throw new BlockchainError("TX_SEND_FAILED", errMsg(err));
     }
@@ -152,47 +168,6 @@ export class BlockchainService {
       blockNumber: receipt.blockNumber,
       onChainId: id,
     };
-  }
-
-  /**
-   * Verifica integridade — usado pelo cron e pela verificação manual.
-   * NUNCA lança em falha de RPC; degrada para PENDING (RNF-REL-003).
-   */
-  async verify(uuid: string, candidateHashHex: string): Promise<VerificationResult> {
-    const id = BlockchainService.idToBytes32(uuid);
-    const candidate = hashToBytes32(candidateHashHex);
-
-    try {
-      const [hash, timestamp, blockNumber] = (await this.contract.getProof(id)) as [
-        string,
-        bigint,
-        bigint
-      ];
-
-      if (!hash || hash === ZERO_BYTES32) {
-        return {
-          status: "PENDING",
-          candidateHash: candidate,
-          reason: "ID not found on-chain",
-        };
-      }
-
-      const matches = hash.toLowerCase() === candidate.toLowerCase();
-      return {
-        status: matches ? "VERIFIED" : "COMPROMISED",
-        onChainHash: hash,
-        candidateHash: candidate,
-        timestamp: Number(timestamp),
-        blockNumber: Number(blockNumber),
-      };
-    } catch (err) {
-      // RNF-REL-003: graceful degradation
-      return {
-        status: "PENDING",
-        candidateHash: candidate,
-        reason: `RPC unavailable: ${errMsg(err)}`,
-      };
-    }
   }
 
   /**
@@ -272,35 +247,38 @@ let _instance: BlockchainService | null = null;
 export function initProvider(): BlockchainService {
   if (_instance) return _instance;
 
-  _instance = new BlockchainService({
-    rpcUrl: process.env.SEPOLIA_RPC_URL!,
-    privateKey: process.env.BACKEND_WALLET_PRIVATE_KEY!,
-    contractAddress: process.env.CONTRACT_ADDRESS!,
-    timeoutMs: 60_000,
-    confirmations: 1,
-  });
+  try {
+    const privateKey = process.env.BACKEND_WALLET_PRIVATE_KEY!;
+    const rpcUrl     = process.env.SEPOLIA_RPC_URL!;
+    const address    = process.env.CONTRACT_ADDRESS!;
 
-  return _instance;
+    // Aviso antecipado se CONTRACT_ADDRESS for o placeholder zero
+    if (address === '0x0000000000000000000000000000000000000000') {
+      console.warn(
+        '[BlockchainService] AVISO: CONTRACT_ADDRESS é o endereço zero. ' +
+        'Faça o deploy do contrato e atualize .env para habilitar ancoragem real.'
+      );
+    }
+
+    _instance = new BlockchainService({
+      rpcUrl,
+      privateKey, // normalização do 0x é feita dentro do construtor
+      contractAddress: address,
+      timeoutMs: 60_000,
+      confirmations: 1,
+    });
+
+    console.log('[BlockchainService] ✅ Singleton inicializado com sucesso.');
+    return _instance;
+  } catch (err: any) {
+    // Task 2: NUNCA deixar a falha de inicialização derrubar o processo
+    // O controller captura BLOCKCHAIN_UNAVAILABLE e retorna 503
+    console.error('[BlockchainService] ❌ Falha na inicialização:', err?.message ?? err);
+    throw err; // Relança para o caller (getTituloService no controller) tratar
+  }
 }
 
-/**
- * Ancora o hash de um título na blockchain.
- * @param id  UUID do título (convertido internamente para bytes32 via keccak256)
- * @param hash Hash SHA-256 hex de 64 chars gerado pelo hashEngine
- * @returns txHash da transação confirmada (para salvar no PostgreSQL)
- * @throws BlockchainError com código TIMEOUT se não confirmar em 60s
- */
-export async function storeHashOnChain(id: string, hash: string): Promise<string> {
-  const svc = _instance ?? initProvider();
-  const result = await svc.anchorHash(id, hash);
-  return result.txHash;
-}
 
-/**
- * Recupera o hash ancorado on-chain para um UUID.
- * Custo zero de gás (view function).
- * @returns Hash hex lowercase de 64 chars, ou null em caso de falha de rede.
- */
 export async function getHashFromChain(id: string): Promise<string | null> {
   const svc = _instance ?? initProvider();
   try {

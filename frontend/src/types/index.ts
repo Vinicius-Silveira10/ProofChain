@@ -1,6 +1,6 @@
 // Tipagens Exatas baseadas no Prisma Schema e no Documento de Mapeamento de Integração
 
-export type Role = 'ADMINISTRADOR' | 'AUDITOR' | 'OPERADOR';
+export type Role = 'ADMINISTRADOR' | 'AUDITOR' | 'OPERADOR' | 'ADMIN' | 'OPERATOR';
 export type StatusUsuario = 'ATIVO' | 'REVOGADO';
 
 export interface Usuario {
@@ -28,19 +28,8 @@ export interface Titulo {
   blockchainHash?: string | null;
   txHash?: string | null;
   blockTimestamp?: string | null;
-  parcelas?: Parcela[];
 }
 
-export type StatusParcela = 'PENDENTE' | 'PAGA' | 'ATRASADA';
-
-export interface Parcela {
-  id: string;
-  tituloId: string;
-  numero: number;
-  valor: number;
-  vencimento: string;
-  status: StatusParcela;
-}
 
 export interface LogAuditoria {
   id: string;
@@ -50,6 +39,7 @@ export interface LogAuditoria {
   acao: string;
   entidadeId?: string | null;
   enderecoIp: string;
+  detalhes?: any;
 }
 
 // Resposta Paginada Padrão

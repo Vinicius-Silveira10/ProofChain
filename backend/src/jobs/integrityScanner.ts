@@ -58,6 +58,22 @@ export const integrityScanner = {
           console.error(`[Oráculo-CRITICAL] Mutações ilegais detectadas no Título ${id}. Assinando fraude no banco.`);
           totalAnomaliasEncontradas++;
           
+          // Buscar o suspeito da fraude (último usuário que editou o registro)
+          const lastModification = await prisma.auditLog.findFirst({
+            where: { 
+              tituloDividaId: id, 
+              userId: { not: null },
+              action: { in: ['UPDATE', 'PAYMENT_REGISTERED', 'STATUS_CHANGE', 'INSERT'] }
+            },
+            orderBy: { timestamp: 'desc' },
+            include: { user: true }
+          });
+
+          const suspectInfo = lastModification?.user ? {
+            name: lastModification.user.name,
+            email: lastModification.user.email
+          } : null;
+          
           await prisma.$transaction(async (tx) => {
             await tx.tituloDivida.update({
               where: { id },
@@ -66,10 +82,13 @@ export const integrityScanner = {
             await tx.auditLog.create({
               data: {
                 tituloDividaId: id,
-                userId: 'SYSTEM',
+                userId: null,  // Log do sistema — sem usuário humano associado
                 action: 'INTEGRITY_BREACH_DETECTED',
                 clientIp: '127.0.0.1',
-                diff_snapshot: { summary: 'O Oráculo detectou divergências fatais contra a Blockchain de origem.' }
+                diff_snapshot: { 
+                  summary: 'O Oráculo detectou divergências fatais contra a Blockchain de origem.',
+                  suspect: suspectInfo
+                }
               }
             });
           });
@@ -84,7 +103,7 @@ export const integrityScanner = {
             await tx.auditLog.create({
               data: {
                 tituloDividaId: id,
-                userId: 'SYSTEM',
+                userId: null,  // Log do sistema — sem usuário humano associado
                 action: 'STATUS_CHANGE',
                 clientIp: '127.0.0.1',
                 diff_snapshot: { summary: 'Integridade criptográfica restaurada à perfeição.' }
@@ -120,7 +139,7 @@ export const integrityScanner = {
         await tx.auditLog.create({
           data: {
             tituloDividaId: parcela.tituloDividaId,
-            userId: 'SYSTEM',
+            userId: null,  // Log do sistema — sem usuário humano associado
             action: 'INSTALLMENT_OVERDUE',
             clientIp: '127.0.0.1',
             diff_snapshot: {
@@ -137,7 +156,7 @@ export const integrityScanner = {
       await prisma.auditLog.create({
         data: {
           tituloDividaId: anchorId,
-          userId: 'SYSTEM',
+          userId: null,  // Log do sistema — sem usuário humano associado
           action: 'VERIFICATION_REQUESTED',
           clientIp: '127.0.0.1',
           diff_snapshot: { 

@@ -52,6 +52,7 @@ export default function Auditoria() {
             acao: log.acao,
             entidadeId: log.entidadeId || '-',
             enderecoIp: log.enderecoIp || '-',
+            detalhes: log.detalhes,
           }));
           
           setLogs(mappedLogs);

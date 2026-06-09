@@ -1,12 +1,15 @@
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Shield, LayoutDashboard, Briefcase, FileText, FileSearch, Users, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 
 export function AuthLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { logout } = useAuth();
 
   const handleLogout = () => {
+    logout();           // Limpa token + user do localStorage e zera o AuthContext
     navigate("/login");
   };
 

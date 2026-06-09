@@ -1,0 +1,112 @@
+name: ProofChain CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  # JOB 1: Testes do Backend (Node.js + PostgreSQL)
+  # ──────────────────────────────────────────────────────────────
+  backend-tests:
+    name: Backend — Node.js Tests
+    runs-on: ubuntu-latest
+
+    # Serviço PostgreSQL isolado (mesma imagem do docker-compose local)
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: proofchain
+          POSTGRES_PASSWORD: senha123
+          POSTGRES_DB: proofchain_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Banco principal (migrações de produção)
+      DATABASE_URL: postgresql://proofchain:senha123@localhost:5432/proofchain_db?schema=public
+      # Banco isolado de testes E2E
+      DATABASE_URL_TEST: postgresql://proofchain:senha123@localhost:5432/proofchain_test?schema=public
+      # Segredos obrigatórios para o validateEnv() do backend
+      JWT_SECRET: ${{ secrets.JWT_SECRET || 'ci-test-secret-256bits-placeholder' }}
+      JWT_EXPIRES_IN: 8h
+      PORT: 3001
+      NODE_ENV: test
+      # Credenciais blockchain — valores fictícios aceitos em modo test/offline
+      SEPOLIA_RPC_URL: https://sepolia.infura.io/v3/placeholder
+      BACKEND_WALLET_PRIVATE_KEY: ${{ secrets.BACKEND_WALLET_PRIVATE_KEY || '0x0000000000000000000000000000000000000000000000000000000000000001' }}
+      CONTRACT_ADDRESS: ${{ secrets.CONTRACT_ADDRESS || '0x0000000000000000000000000000000000000000' }}
+      CORS_ALLOWED_ORIGINS: http://localhost:3000
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate Prisma Client
+        working-directory: backend
+        run: npx prisma generate
+
+      - name: Run main database migrations
+        working-directory: backend
+        run: npx prisma migrate deploy
+
+      - name: Create isolated test database
+        run: |
+          PGPASSWORD=senha123 psql \
+            -h localhost -U proofchain -d proofchain_db \
+            -c "CREATE DATABASE proofchain_test;"
+
+      - name: Run backend test suite with coverage
+        working-directory: backend
+        run: npm test -- --coverage --forceExit --detectOpenHandles
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 2: Testes do Smart Contract (Hardhat — rede local)
+  # Roda em paralelo com o Job 1, sem depender do PostgreSQL.
+  # ──────────────────────────────────────────────────────────────
+  smart-contract-tests:
+    name: Smart Contract — Hardhat Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: smart-contract/package-lock.json
+
+      - name: Install smart-contract dependencies
+        working-directory: smart-contract
+        run: npm ci
+
+      - name: Compile Solidity contracts
+        working-directory: smart-contract
+        run: npx hardhat compile
+
+      - name: Run Hardhat test suite
+        working-directory: smart-contract
+        # Os testes usam a rede 'hardhat' local — nenhuma credencial de Sepolia necessária
+        run: npx hardhat test

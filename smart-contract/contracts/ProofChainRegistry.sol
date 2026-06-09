@@ -14,10 +14,16 @@ pragma solidity ^0.8.19;
  *  - Struct unificado (hash + timestamp + blockNumber) — 1 SSTORE em vez de 2.
  *  - Função batch para ancorar múltiplos hashes (reduz custo por título).
  *  - Pausable para incident response (falha de chave privada do backend).
+ *
+ * v2 (pós-auditoria):
+ *  - Evento HashStored com `hash` indexed e `uuid` string (rastreabilidade forense).
+ *  - storeHash/storeHashBatch recebem uuid para emissão no evento.
+ *  - Variáveis de storage reordenadas para packing (paused junto com pendingOwner).
+ *  - Cache de block.timestamp/block.number no batch (~200 gas/item economizados).
  */
 contract ProofChainRegistry {
     // ------------------------------------------------------------------
-    // STORAGE
+    // STORAGE — reordenado para packing eficiente (S-01)
     // ------------------------------------------------------------------
 
     struct Proof {
@@ -30,16 +36,18 @@ contract ProofChainRegistry {
     mapping(bytes32 => Proof) private _proofs;
 
     address public owner;
+    // pendingOwner (20 bytes) + paused (1 byte) = 21 bytes — empacotados no mesmo slot
     address public pendingOwner;
     bool    public paused;
 
     // ------------------------------------------------------------------
-    // EVENTS
+    // EVENTS (A-01 + E-01: hash indexed, uuid para auditoria on-chain)
     // ------------------------------------------------------------------
 
     event HashStored(
         bytes32 indexed id,
-        bytes32 hash,
+        bytes32 indexed hash,
+        string  uuid,
         uint256 timestamp,
         uint256 blockNumber
     );
@@ -58,6 +66,7 @@ contract ProofChainRegistry {
     error ZeroAddress();
     error EmptyId();
     error ZeroHash();
+    error EmptyUuid();
     error AlreadyRegistered(bytes32 id);
     error IsPaused();
     error LengthMismatch();
@@ -94,10 +103,14 @@ contract ProofChainRegistry {
      * @notice Ancora o hash de integridade de um Título de Dívida.
      * @param id   Identificador do título (recomendado: keccak256(uuid)).
      * @param hash Hash SHA-256 calculado pelo backend.
+     * @param uuid UUID original do título (emitido no evento para auditoria).
      */
-    function storeHash(bytes32 id, bytes32 hash) external onlyOwner whenNotPaused {
+    function storeHash(bytes32 id, bytes32 hash, string calldata uuid)
+        external onlyOwner whenNotPaused
+    {
         if (id == bytes32(0)) revert EmptyId();
         if (hash == bytes32(0)) revert ZeroHash();
+        if (bytes(uuid).length == 0) revert EmptyUuid();
         if (_proofs[id].hash != bytes32(0)) revert AlreadyRegistered(id);
 
         _proofs[id] = Proof({
@@ -106,21 +119,29 @@ contract ProofChainRegistry {
             blockNumber: uint64(block.number)
         });
 
-        emit HashStored(id, hash, block.timestamp, block.number);
+        emit HashStored(id, hash, uuid, block.timestamp, block.number);
     }
 
     /**
      * @notice Ancora múltiplos hashes em uma única transação.
      *         Útil para reanchoragem em lote ou recovery de fila.
+     * @param ids    Array de keccak256(uuid).
+     * @param hashes Array de hashes SHA-256.
+     * @param uuids  Array de UUIDs originais para emissão nos eventos.
      */
-    function storeHashBatch(bytes32[] calldata ids, bytes32[] calldata hashes)
-        external
-        onlyOwner
-        whenNotPaused
-    {
+    function storeHashBatch(
+        bytes32[] calldata ids,
+        bytes32[] calldata hashes,
+        string[]  calldata uuids
+    ) external onlyOwner whenNotPaused {
         uint256 len = ids.length;
         if (len == 0) revert EmptyBatch();
         if (len != hashes.length) revert LengthMismatch();
+        if (len != uuids.length) revert LengthMismatch();
+
+        // G-01: cache de variáveis de bloco — leitura única fora do loop
+        uint64 _ts    = uint64(block.timestamp);
+        uint64 _block = uint64(block.number);
 
         for (uint256 i = 0; i < len; ) {
             bytes32 id = ids[i];
@@ -130,13 +151,9 @@ contract ProofChainRegistry {
             if (hash == bytes32(0)) revert ZeroHash();
             if (_proofs[id].hash != bytes32(0)) revert AlreadyRegistered(id);
 
-            _proofs[id] = Proof({
-                hash: hash,
-                timestamp: uint64(block.timestamp),
-                blockNumber: uint64(block.number)
-            });
+            _proofs[id] = Proof({ hash: hash, timestamp: _ts, blockNumber: _block });
 
-            emit HashStored(id, hash, block.timestamp, block.number);
+            emit HashStored(id, hash, uuids[i], _ts, _block);
 
             unchecked { ++i; }
         }

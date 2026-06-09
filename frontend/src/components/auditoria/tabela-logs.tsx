@@ -17,6 +17,7 @@ export interface LogEntry {
   acao: string;
   entidadeId: string;
   enderecoIp: string;
+  detalhes?: any;
 }
 
 interface TabelaLogsProps {
@@ -73,7 +74,16 @@ export function TabelaLogs({
               <TableCell className="font-mono text-sm text-muted-foreground">
                 {log.dataHora}
               </TableCell>
-              <TableCell className="font-medium">{log.usuario}</TableCell>
+              <TableCell className="font-medium">
+                {log.usuario}
+                {isBreachAction(log.acao) && log.detalhes?.suspect && (
+                  <div className="mt-1 flex items-center">
+                    <span className="inline-flex items-center rounded-md bg-red-100 px-2 py-0.5 text-xs font-bold text-red-800 dark:bg-red-900/40 dark:text-red-400">
+                      Suspeito: {log.detalhes.suspect.name}
+                    </span>
+                  </div>
+                )}
+              </TableCell>
               <TableCell>
                 <div
                   className={cn(

@@ -3,10 +3,12 @@ import { authService } from '../services/authService';
 import rateLimit from 'express-rate-limit';
 import { AuthRequest } from '../middleware/auth';
 
-// Limiter específico para a rota de login: 5 tentativas a cada 15 min.
+// Limiter específico para a rota de login.
+// DEV: 50 tentativas a cada 15 min (facilita testes).
+// PROD: reduzir para 5.
 export const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: 50,
   message: { error: 'Muitas tentativas de login. Tente novamente após 15 minutos.' },
   standardHeaders: true,
   legacyHeaders: false,
