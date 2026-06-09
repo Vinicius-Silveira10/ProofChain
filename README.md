@@ -8,9 +8,10 @@ O ProofChain combina a privacidade e performance de um banco de dados relacional
 
 ## 📊 Apresentação do Projeto
 
-Confira a apresentação em PDF com os detalhes, arquitetura e proposta de valor do projeto:
-- **No repositório:** [ProofChain_Pitch.pptx.pdf](./ProofChain_Pitch.pptx.pdf)
-- **No Google Drive:** [Acessar apresentação online](https://drive.google.com/file/d/1lWzpRizv3TqoH0gam2_Es31IibCDCsee/view?usp=sharing)
+Confira o vídeo de apresentação (pitch) e o documento em PDF com os detalhes, arquitetura e proposta de valor do projeto:
+- **Vídeo Pitch:** [Assistir no YouTube](https://youtu.be/bEszk-eqpIs)
+- **PDF no repositório:** [ProofChain_Pitch.pptx.pdf](./ProofChain_Pitch.pptx.pdf)
+- **PDF no Google Drive:** [Acessar apresentação online](https://drive.google.com/file/d/1lWzpRizv3TqoH0gam2_Es31IibCDCsee/view?usp=sharing)
 
 ---
 
